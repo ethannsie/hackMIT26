@@ -1,0 +1,32 @@
+{
+  "name": "irl-physics-sim",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n web,api -c cyan,magenta \"vite\" \"npm:dev:api\"",
+    "dev:api": "tsx watch server/index.ts",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "check": "tsc --noEmit",
+    "verify": "tsx scripts/verify-sims.ts"
+  },
+  "dependencies": {
+    "katex": "^0.16.11",
+    "matter-js": "^0.20.0",
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/matter-js": "^0.19.7",
+    "@types/node": "^26.6.2",
+    "@types/three": "^0.169.0",
+    "concurrently": "^9.1.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "openai": "^4.73.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

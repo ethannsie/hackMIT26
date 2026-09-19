@@ -5,9 +5,9 @@
  * proxies /api here (see vite.config.ts), so the front end only ever talks to
  * localhost and never holds a credential.
  *
- * Per the plan's failure ladder (§12), the hosted-API path is rung 3. The
- * on-device GX10 (rung 1) is tried first: it runs Ollama, whose OpenAI-compatible
- * endpoint takes the exact same prompt and strict schema, so the two backends
+ * The agreed demo runs all models on GX10; leave OPENAI_API_KEY unset.
+ * Hosted support remains a development contingency. GX10 runs Ollama, whose
+ * OpenAI-compatible endpoint takes the exact same prompt and strict schema, so the two backends
  * differ only in base URL, model name and how long we are willing to wait.
  *
  * Measured on the GX10 (Sat 19 Sep): qwen3.8 (27B, vision) returns a full

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# One-shot GX10 setup for the demo. Idempotent: safe to re-run.
+# GX10 provisioning used during initial setup; see gx10/README.md.
+# Retains legacy serial packages/permissions from the former sensor plan.
+# The active webcam-only, two-display demo does not need a sensor bridge.
 # Run ON the GX10 as the login user (asus):  bash ~/hackMIT26/gx10/setup.sh
 # What it does and why: gx10/README.md. Verified on DGX OS / Ubuntu 24.04.4, Sat 19 Sep 2026.
 set -euo pipefail

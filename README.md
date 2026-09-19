@@ -1,19 +1,35 @@
 # IRL Physics Sim
 
-Photograph a mechanics problem, get a live simulation you can reach into with
-your hands, with the derivation rewriting itself as you move.
+Tap **Take a picture** on the **7-inch touchscreen**, capture a physics problem
+with the **USB webcam**, then interact with its simulation on the larger
+**ASUS portable monitor** using webcam-tracked hands.
 
-Full plan and scope tiers: [hackmit-2026-plan.md](hackmit-2026-plan.md).
-**What the system can and cannot simulate: [CAPABILITIES.md](CAPABILITIES.md).**
-This README covers the **simulation and ingest** half — stages [1]–[3] and [5].
+**All models run on the ASUS Ascent GX10**, which also hosts the app and
+simulation. The webcam serves both photo capture and hand tracking. No depth
+sensor, IMU, ESP32, firmware or serial bridge is required for the active demo.
 
----
+The initial demo covers **projectile, inclined plane, pendulum and 1D collision**
+(confirmed September 19). The engine already contains nine
+problem types and a sandbox; those additional capabilities are not part of the
+initial touchscreen menu scope.
+
+**Implementation status:** the solver, derivations, graphs, mouse interaction
+and extraction API exist. The webcam HandSource adapter, touch capture menu,
+shared controller/display state and two-monitor deployment still need integration
+and hardware validation. This documentation describes the agreed target, not a
+claim that these features are finished.
+
+- [Build plan](hackmit-2026-plan.md): architecture, scope and acceptance.
+- [GX10 guide](gx10/README.md): local inference and hardware setup.
+- [Capabilities](CAPABILITIES.md): existing engine behavior and limitations.
+- [Hardware checklist](HackMIT_2026_Hardware_Checkout.docx): active rig.
+- [Organizer inventory](HackMIT%202026%20Hardware%20List.pdf): original reference catalog, not project requirements.
 
 ## Run it
 
 ```bash
 npm install
-cp .env.example .env      # add your OpenAI key
+cp .env.example .env      # GX10 local Ollama settings; see gx10/README.md
 npm run dev               # web app on :5173, extract API on :8787
 ```
 
@@ -34,9 +50,9 @@ app for keyboard shortcuts.
 judge — it has already caught a pendulum that silently decayed, a magnetic orbit
 that gained 2175% speed, and bodies falling off the end of the floor.
 
-Without an API key everything still works except photo ingest: pick a problem
-type from the dropdown and use the sliders. That is rung 4 of the failure
-ladder, and it is deliberately a complete demo on its own.
+The GX10 local extraction path needs no OpenAI key. If extraction is unavailable,
+pick a prepared problem and use the sliders. Hosted OpenAI support remains in
+code for development, but the agreed demo runs all models locally.
 
 ---
 
@@ -82,9 +98,12 @@ the mock at one line in [src/main.ts](src/main.ts). Until then
 [src/hand/mock.ts](src/hand/mock.ts) drives the same interface from the mouse,
 so both halves are testable today.
 
-Contact model is in [src/hand/coupling.ts](src/hand/coupling.ts): crossing the
-plane applies `F = clamp(k · penetration, 0, F_max)`; pinching near a pushable
-body grabs it; releasing throws it at the measured palm velocity.
+The existing coupling in [src/hand/coupling.ts](src/hand/coupling.ts) accepts
+synthetic plane penetration for push and pinch for grab/release. For the
+webcam-only demo, define image-plane or gesture-based contact and map it into
+this interface; no physical depth stream is required. Velocity is in simulation
+units after camera-to-scene mapping. Tracking loss and capture mode must clear
+interaction safely.
 
 ---
 
@@ -147,10 +166,11 @@ Both cost real debugging time. Both are caught by `npm run verify`.
 
 2. **Extract** — [server/index.ts](server/index.ts). The key lives only in this
    process; Vite proxies `/api` to it so the browser never holds a credential.
-   Uses OpenAI structured outputs with `strict: true` and `temperature: 0`, so
-   the reply cannot be shaped wrong and the same photo gives the same spec.
-   Set `EXTRACT_LOCAL_URL` to the GX10 and it tries on-device first, falling back
-   to the hosted API on a 2 s timeout.
+   Uses the same prompt and JSON schema for local Ollama and the existing
+   hosted path. On GX10 set `EXTRACT_LOCAL_URL=http://localhost:11434/v1`,
+   `EXTRACT_LOCAL_MODEL=qwen3.8` and `EXTRACT_LOCAL_TIMEOUT_MS=45000`. Leave
+   `OPENAI_API_KEY` unset for the all-local demo. A tested local extraction took
+   about 28 seconds; the new touchscreen flow needs loading and retry states.
 
 3. **Validate** — [src/spec/validate.ts](src/spec/validate.ts). Structured
    outputs guarantee shape, never physics. This clamps implausible values,
@@ -161,7 +181,7 @@ Both cost real debugging time. Both are caught by `npm run verify`.
 Test the whole path against a real image:
 
 ```bash
-npx tsx scripts/e2e.ts path/to/problem.jpg     # costs one API call
+npx tsx scripts/e2e.ts path/to/problem.jpg     # uses configured extraction backend
 ```
 
 ---
@@ -182,7 +202,7 @@ scripts/         verify-sims.ts (run this), e2e.ts
 
 The canvas renderer is deliberately not three.js. It draws the solver's actual
 state, so when the animation and the derivation disagree we can see which one is
-lying. It stays useful as a debug view once the 3D scene lands.
+lying. It is sufficient for the initial demo; a three.js scene is not required.
 
 ## Third-party
 

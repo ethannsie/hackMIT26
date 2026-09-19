@@ -9,7 +9,7 @@
  *
  * Everything here is pure: same params in, same numbers out, no engine state.
  */
-import type { SimParams } from './params.ts'
+import { INERTIA_COEFF, type SimParams } from './params.ts'
 import type { Askable } from '../spec/types.ts'
 
 export interface DerivationStep {
@@ -285,6 +285,310 @@ function collision(p: Extract<SimParams, { kind: 'collision_1d' }>): Solution[] 
   ]
 }
 
+
+// ---------------------------------------------------------------------------
+// The hard-to-picture five.
+// ---------------------------------------------------------------------------
+
+function rolling(p: Extract<SimParams, { kind: 'rolling_without_slipping' }>): Solution[] {
+  const { radius_m: r, mass_kg: m, v_ms: v, shape } = p
+  const k = INERTIA_COEFF[shape]
+  const omega = v / r
+  const I = k * m * r * r
+
+  const keTrans = 0.5 * m * v * v
+  const keRot = 0.5 * I * omega * omega
+  const fraction = keRot / (keTrans + keRot) // = k / (1 + k)
+
+  return [
+    {
+      quantity: 'angular_frequency_rads',
+      value: omega,
+      unit: 'rad/s',
+      steps: [
+        {
+          label: 'Rolling without slipping ties rotation to translation',
+          latex: 'v = \\omega r \\;\\Rightarrow\\; \\omega = v/r',
+          substituted: `\\omega = ${n(v)}/${n(r)} = ${n(omega)}\\ \\text{rad/s}`,
+        },
+      ],
+    },
+    {
+      quantity: 'contact_point_speed_ms',
+      value: 0,
+      unit: 'm/s',
+      steps: [
+        {
+          label: 'The contact point is instantaneously at rest — translation and rotation cancel exactly',
+          latex: 'v_{contact} = v - \\omega r = 0',
+          substituted: `v_{contact} = ${n(v)} - (${n(omega)})(${n(r)}) = 0\\ \\text{m/s}`,
+        },
+      ],
+      caveat:
+        'The wheel is moving, yet the point touching the ground has zero velocity. That is why static friction can act here without doing any work, and why rolling does not wear the contact point away.',
+    },
+    {
+      quantity: 'top_point_speed_ms',
+      value: 2 * v,
+      unit: 'm/s',
+      steps: [
+        {
+          label: 'At the top, translation and rotation add instead of cancelling',
+          latex: 'v_{top} = v + \\omega r = 2v',
+          substituted: `v_{top} = ${n(v)} + (${n(omega)})(${n(r)}) = ${n(2 * v)}\\ \\text{m/s}`,
+        },
+      ],
+      caveat: `The top of the wheel moves at ${n(2 * v)} m/s — twice the speed of the axle — while the bottom is stationary. Both are true at the same instant on the same rigid body.`,
+    },
+    {
+      quantity: 'rotational_ke_fraction',
+      value: fraction,
+      unit: '',
+      steps: [
+        {
+          label: `Moment of inertia for a ${shape}: I = ${n(k)}mr²`,
+          latex: 'K_{rot}/K_{total} = \\frac{\\tfrac{1}{2}I\\omega^2}{\\tfrac{1}{2}mv^2 + \\tfrac{1}{2}I\\omega^2} = \\frac{k}{1+k}',
+          substituted: `= \\frac{${n(k)}}{1 + ${n(k)}} = ${n(fraction)}`,
+        },
+      ],
+      caveat: `${n(fraction * 100, 1)}% of this body's kinetic energy is rotation, not motion down the track. Change the shape and this fraction changes — which is the whole reason a hoop loses a race to a disc, and a disc to a sphere.`,
+    },
+  ]
+}
+
+function circular(p: Extract<SimParams, { kind: 'circular_motion' }>): Solution[] {
+  const { radius_m: r, speed_ms: v, mass_kg: m } = p
+  const omega = v / r
+  const T = (2 * Math.PI * r) / v
+  const ac = (v * v) / r
+  const Fc = m * ac
+
+  return [
+    {
+      quantity: 'centripetal_acceleration_ms2',
+      value: ac,
+      unit: 'm/s²',
+      steps: [
+        {
+          label: 'Speed is constant, yet the velocity vector is turning — so there is acceleration',
+          latex: 'a_c = \\frac{v^2}{r} = \\omega^2 r',
+          substituted: `a_c = \\frac{(${n(v)})^2}{${n(r)}} = ${n(ac)}\\ \\text{m/s}^2`,
+        },
+      ],
+      caveat:
+        'This acceleration points at the centre, where nothing is moving and nothing is located. The velocity points along the tangent. The two are perpendicular at every instant, which is exactly why the speed never changes while the direction always does.',
+    },
+    {
+      quantity: 'centripetal_force_n',
+      value: Fc,
+      unit: 'N',
+      steps: [
+        {
+          label: 'Newton\'s second law, directed inward',
+          latex: 'F_c = ma_c = \\frac{mv^2}{r}',
+          substituted: `F_c = (${n(m)})(${n(ac)}) = ${n(Fc)}\\ \\text{N}`,
+        },
+      ],
+      caveat:
+        'There is no outward force. What feels like one is your own inertia continuing straight while the constraint pulls you off that line.',
+    },
+    {
+      quantity: 'period_s',
+      value: T,
+      unit: 's',
+      steps: [
+        {
+          label: 'One full circumference at constant speed',
+          latex: 'T = \\frac{2\\pi r}{v}',
+          substituted: `T = \\frac{2\\pi(${n(r)})}{${n(v)}} = ${n(T)}\\ \\text{s}`,
+        },
+      ],
+    },
+    {
+      quantity: 'angular_frequency_rads',
+      value: omega,
+      unit: 'rad/s',
+      steps: [
+        {
+          label: 'Angular rate',
+          latex: '\\omega = v/r',
+          substituted: `\\omega = ${n(v)}/${n(r)} = ${n(omega)}\\ \\text{rad/s}`,
+        },
+      ],
+    },
+  ]
+}
+
+function magnetic(p: Extract<SimParams, { kind: 'charged_particle_magnetic' }>): Solution[] {
+  const { charge_c: q, b_field_tesla: B, mass_kg: m, speed_ms: v } = p
+  const absQB = Math.abs(q * B)
+  const r = absQB === 0 ? Infinity : (m * v) / absQB
+  const T = absQB === 0 ? Infinity : (2 * Math.PI * m) / absQB
+  const omega = absQB / m
+  const sense = q * B > 0 ? 'clockwise' : 'counter-clockwise'
+
+  return [
+    {
+      quantity: 'orbit_radius_m',
+      value: r,
+      unit: 'm',
+      steps: [
+        {
+          label: 'The magnetic force supplies exactly the centripetal force',
+          latex: 'qvB = \\frac{mv^2}{r} \\;\\Rightarrow\\; r = \\frac{mv}{|q|B}',
+          substituted: `r = \\frac{(${n(m)})(${n(v)})}{|${n(q)}|(${n(B)})} = ${n(r)}\\ \\text{m}`,
+        },
+      ],
+      caveat: `The force is qv × B: perpendicular to the velocity AND to the field, so it points somewhere neither the particle nor the field is heading. Here that makes the orbit ${sense}. Flip the sign of the charge or the field and it reverses.`,
+    },
+    {
+      quantity: 'cyclotron_period_s',
+      value: T,
+      unit: 's',
+      steps: [
+        {
+          label: 'Period of one full orbit',
+          latex: 'T = \\frac{2\\pi m}{|q|B}',
+          substituted: `T = \\frac{2\\pi(${n(m)})}{|${n(q)}|(${n(B)})} = ${n(T)}\\ \\text{s}`,
+        },
+      ],
+      caveat:
+        'The speed v cancels out. A fast particle traces a bigger circle but takes exactly the same time to go around. Change the speed slider and watch the radius move while the period does not — that is the principle the cyclotron is built on.',
+    },
+    {
+      quantity: 'cyclotron_frequency_rads',
+      value: omega,
+      unit: 'rad/s',
+      steps: [
+        {
+          label: 'Angular frequency, again independent of speed',
+          latex: '\\omega_c = \\frac{|q|B}{m}',
+          substituted: `\\omega_c = \\frac{|${n(q)}|(${n(B)})}{${n(m)}} = ${n(omega)}\\ \\text{rad/s}`,
+        },
+      ],
+    },
+    {
+      quantity: 'work_done_j',
+      value: 0,
+      unit: 'J',
+      steps: [
+        {
+          label: 'Force is perpendicular to displacement at every instant',
+          latex: 'W = \\int \\vec{F}\\cdot d\\vec{s} = 0 \\quad\\text{since}\\quad \\vec{F}\\perp\\vec{v}',
+          substituted: 'W = 0\\ \\text{J}\\quad\\text{always}',
+        },
+      ],
+      caveat:
+        'A magnetic field can change where a particle goes but never how fast it goes. The kinetic energy readout will not move no matter how long this runs.',
+    },
+  ]
+}
+
+function rotatingFrame(p: Extract<SimParams, { kind: 'rotating_frame' }>): Solution[] {
+  const { omega_rads: w, speed_ms: v, mass_kg: m, r0_m: r0 } = p
+  const aCor = 2 * Math.abs(w) * v
+  const aCf = w * w * r0
+  const deflection = w > 0 ? 'right' : 'left'
+
+  return [
+    {
+      quantity: 'coriolis_acceleration_ms2',
+      value: aCor,
+      unit: 'm/s²',
+      steps: [
+        {
+          label: 'Coriolis term — depends on velocity, not position',
+          latex: '\\vec{a}_{Cor} = -2\\vec{\\omega}\\times\\vec{v}, \\quad |a_{Cor}| = 2\\omega v',
+          substituted: `|a_{Cor}| = 2(${n(Math.abs(w))})(${n(v)}) = ${n(aCor)}\\ \\text{m/s}^2`,
+        },
+      ],
+      caveat: `In the inertial frame this particle travels in a perfectly straight line at constant speed, with no force on it at all. In the rotating frame it curves to the ${deflection}. Both descriptions are correct; the curve is the frame turning underneath, not a push.`,
+    },
+    {
+      quantity: 'centrifugal_acceleration_ms2',
+      value: aCf,
+      unit: 'm/s²',
+      steps: [
+        {
+          label: 'Centrifugal term — depends on position, not velocity',
+          latex: '\\vec{a}_{cf} = -\\vec{\\omega}\\times(\\vec{\\omega}\\times\\vec{r}), \\quad |a_{cf}| = \\omega^2 r',
+          substituted: `|a_{cf}| = (${n(w)})^2(${n(r0)}) = ${n(aCf)}\\ \\text{m/s}^2`,
+        },
+      ],
+      caveat:
+        'Neither of these has a third-law partner. Nothing is pushing back, because nothing is pushing — they are bookkeeping terms that appear when you insist on measuring from a frame that is itself turning.',
+    },
+    {
+      quantity: 'centripetal_force_n',
+      value: m * aCf,
+      unit: 'N',
+      steps: [
+        {
+          label: 'What an observer in the rotating frame would report as an outward pull',
+          latex: 'F_{cf} = m\\omega^2 r',
+          substituted: `F_{cf} = (${n(m)})(${n(w)})^2(${n(r0)}) = ${n(m * aCf)}\\ \\text{N}`,
+        },
+      ],
+    },
+  ]
+}
+
+function angularMomentumPoint(
+  p: Extract<SimParams, { kind: 'angular_momentum_point' }>,
+): Solution[] {
+  const { mass_kg: m, speed_ms: v, impact_parameter_m: d } = p
+  const L = m * v * d
+  const areal = L / (2 * m)
+
+  return [
+    {
+      quantity: 'angular_momentum_kgm2s',
+      value: L,
+      unit: 'kg·m²/s',
+      steps: [
+        {
+          label: 'Angular momentum about the chosen origin',
+          latex: '\\vec{L} = \\vec{r}\\times\\vec{p}, \\quad |L| = mvd',
+          substituted: `L = (${n(m)})(${n(v)})(${n(d)}) = ${n(L)}\\ \\text{kg}\\cdot\\text{m}^2/\\text{s}`,
+        },
+        {
+          label: 'Only the perpendicular distance survives the cross product',
+          latex: '|\\vec{r}\\times\\vec{p}| = rp\\sin\\theta = p\\,(r\\sin\\theta) = p\\,d',
+          substituted: `r\\sin\\theta = d = ${n(d)}\\ \\text{m at every point on the line}`,
+        },
+      ],
+      caveat:
+        'This particle moves in a straight line and never rotates around anything, yet its angular momentum about this origin is non-zero and perfectly constant. Nothing is spinning. Move the origin onto the line of motion and L drops to zero — angular momentum is a statement about a point you choose, not a property the particle carries.',
+    },
+    {
+      quantity: 'torque_nm',
+      value: 0,
+      unit: 'N·m',
+      steps: [
+        {
+          label: 'No force acts, so no torque acts, so L cannot change',
+          latex: '\\vec{\\tau} = \\frac{d\\vec{L}}{dt} = \\vec{r}\\times\\vec{F} = 0',
+          substituted: '\\tau = 0\\ \\text{N}\\cdot\\text{m}',
+        },
+      ],
+    },
+    {
+      quantity: 'areal_velocity_m2s',
+      value: areal,
+      unit: 'm²/s',
+      steps: [
+        {
+          label: 'The line from the origin sweeps area at a constant rate',
+          latex: '\\frac{dA}{dt} = \\frac{L}{2m} = \\tfrac{1}{2}vd',
+          substituted: `\\frac{dA}{dt} = \\frac{${n(L)}}{2(${n(m)})} = ${n(areal)}\\ \\text{m}^2/\\text{s}`,
+        },
+      ],
+      caveat:
+        "This is Kepler's second law with the gravity removed. Equal areas in equal times is not really about orbits — it is just angular momentum conservation, and it holds even for a particle drifting in a straight line through empty space.",
+    },
+  ]
+}
+
 /** Solve every quantity this problem type supports. Pure. */
 export function solve(params: SimParams): Solution[] {
   switch (params.kind) {
@@ -296,6 +600,16 @@ export function solve(params: SimParams): Solution[] {
       return pendulum(params)
     case 'collision_1d':
       return collision(params)
+    case 'rolling_without_slipping':
+      return rolling(params)
+    case 'circular_motion':
+      return circular(params)
+    case 'charged_particle_magnetic':
+      return magnetic(params)
+    case 'rotating_frame':
+      return rotatingFrame(params)
+    case 'angular_momentum_point':
+      return angularMomentumPoint(params)
   }
 }
 

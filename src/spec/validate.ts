@@ -54,6 +54,13 @@ const RANGES: Partial<Record<keyof SpecGiven, Range>> = {
   v1_ms: { min: -200, max: 200 },
   v2_ms: { min: -200, max: 200 },
   restitution: { min: 0, max: 1 },
+  radius_m: { min: 0.001, max: 50 },
+  // Signed on purpose: a negative charge orbits the opposite way, and that
+  // reversal is most of what the magnetic-field sim is for.
+  charge_c: { min: -1000, max: 1000 },
+  b_field_tesla: { min: -100, max: 100 },
+  omega_rads: { min: -100, max: 100 },
+  impact_parameter_m: { min: -100, max: 100 },
 }
 
 /** Fields without which a given problem type cannot be simulated at all. */
@@ -62,6 +69,12 @@ const REQUIRED_BY_TYPE: Record<ProblemType, (keyof SpecGiven)[]> = {
   inclined_plane: ['incline_angle_deg'],
   pendulum: ['length_m'],
   collision_1d: ['m1_kg', 'm2_kg'],
+  rolling_without_slipping: ['radius_m'],
+  circular_motion: ['radius_m'],
+  // Without a field and a charge there is no force at all, so there is no sim.
+  charged_particle_magnetic: ['b_field_tesla', 'charge_c'],
+  rotating_frame: ['omega_rads'],
+  angular_momentum_point: ['impact_parameter_m'],
 }
 
 function isFiniteNumber(v: unknown): v is number {
@@ -121,6 +134,22 @@ export function validateSpec(raw: unknown): ValidationResult {
   given.body_motion = motion === 'sliding' || motion === 'rolling' ? motion : null
   if (motion != null && given.body_motion === null) {
     repairs.push(`given.body_motion = ${JSON.stringify(motion)} is not 'sliding' or 'rolling'; dropped`)
+  }
+
+  const SHAPES = ['disc', 'sphere', 'hoop', 'point'] as const
+  const shape = rawGiven['body_shape']
+  given.body_shape =
+    typeof shape === 'string' && (SHAPES as readonly string[]).includes(shape)
+      ? (shape as SpecGiven['body_shape'])
+      : null
+  if (shape != null && given.body_shape === null) {
+    repairs.push(`given.body_shape = ${JSON.stringify(shape)} is not one of ${SHAPES.join(', ')}; dropped`)
+  }
+
+  // A charge of exactly zero feels no magnetic force, which is a valid setup but
+  // a degenerate sim. Flag it rather than silently drawing a straight line.
+  if (problem_type === 'charged_particle_magnetic' && given.charge_c === 0) {
+    errors.push('charged_particle_magnetic needs a non-zero charge_c; a neutral particle feels no magnetic force')
   }
 
   if (given.gravity_ms2 === null) {

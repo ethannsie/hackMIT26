@@ -209,6 +209,151 @@ function collision1d(p: Extract<SimParams, { kind: 'collision_1d' }>): BuiltScen
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// The hard-to-picture five. All but rolling run with gravity off — gravity is
+// not the lesson in any of them and would just drag the body out of frame.
+// ---------------------------------------------------------------------------
+
+function rollingWithoutSlipping(
+  p: Extract<SimParams, { kind: 'rolling_without_slipping' }>,
+): BuiltScene {
+  const r = mToPx(p.radius_m)
+  const wheel = Bodies.circle(-mToPx(1.5), -r, r, {
+    label: 'wheel',
+    friction: 0, // rolling is enforced kinematically in corrections.ts
+    frictionStatic: 0,
+    frictionAir: 0,
+    restitution: 0,
+  })
+  Body.setMass(wheel, p.mass_kg)
+  Body.setVelocity(wheel, { x: msToMatterVel(p.v_ms), y: 0 })
+  // omega = v/r is the rolling constraint, applied here and held every step.
+  Body.setAngularVelocity(wheel, msToMatterVel(p.v_ms) / r)
+
+  const g = ground(80)
+  g.friction = 0
+  g.frictionStatic = 0
+
+  return {
+    bodies: [g, wheel],
+    constraints: [],
+    byId: { ground: g, wheel },
+    focusId: 'wheel',
+    interactableIds: ['wheel'],
+  }
+}
+
+function circularMotion(p: Extract<SimParams, { kind: 'circular_motion' }>): BuiltScene {
+  const R = mToPx(p.radius_m)
+  const centreY = -R - mToPx(0.4)
+
+  const pivot = Bodies.circle(0, centreY, 5, { isStatic: true, label: 'pivot' })
+  const ball = Bodies.circle(R, centreY, mToPx(0.05), {
+    label: 'ball',
+    frictionAir: 0,
+    restitution: 0,
+  })
+  Body.setMass(ball, p.mass_kg)
+  // Tangential: at angle 0 on the circle, tangent points straight "up" (-y).
+  Body.setVelocity(ball, { x: 0, y: -msToMatterVel(p.speed_ms) })
+
+  // The string is what actually supplies the centripetal force — no fudging.
+  const string = Constraint.create({
+    bodyA: pivot,
+    bodyB: ball,
+    length: R,
+    stiffness: 1,
+    damping: 0,
+    label: 'string',
+  })
+
+  return {
+    bodies: [pivot, ball],
+    constraints: [string],
+    byId: { pivot, ball },
+    focusId: 'ball',
+    interactableIds: ['ball'],
+  }
+}
+
+function chargedParticle(
+  p: Extract<SimParams, { kind: 'charged_particle_magnetic' }>,
+): BuiltScene {
+  const th = p.angle_deg * DEG
+  const particle = Bodies.circle(0, 0, mToPx(0.04), {
+    label: 'particle',
+    frictionAir: 0,
+    restitution: 1,
+  })
+  Body.setMass(particle, p.mass_kg)
+  Body.setVelocity(particle, {
+    x: msToMatterVel(p.speed_ms * Math.cos(th)),
+    y: -msToMatterVel(p.speed_ms * Math.sin(th)),
+  })
+
+  // No ground: this is a particle in a field region, not a scene with a floor.
+  return {
+    bodies: [particle],
+    constraints: [],
+    byId: { particle },
+    focusId: 'particle',
+    interactableIds: ['particle'],
+  }
+}
+
+function rotatingFrame(p: Extract<SimParams, { kind: 'rotating_frame' }>): BuiltScene {
+  const th = p.angle_deg * DEG
+  const particle = Bodies.circle(mToPx(p.r0_m), 0, mToPx(0.04), {
+    label: 'particle',
+    frictionAir: 0,
+    restitution: 1,
+  })
+  Body.setMass(particle, p.mass_kg)
+  Body.setVelocity(particle, {
+    x: msToMatterVel(p.speed_ms * Math.cos(th)),
+    y: -msToMatterVel(p.speed_ms * Math.sin(th)),
+  })
+
+  // A marker at the rotation axis, so the origin the pseudo-forces refer to is
+  // visible rather than implied.
+  const axis = Bodies.circle(0, 0, 4, { isStatic: true, label: 'pivot' })
+
+  return {
+    bodies: [axis, particle],
+    constraints: [],
+    byId: { pivot: axis, particle },
+    focusId: 'particle',
+    interactableIds: ['particle'],
+  }
+}
+
+function angularMomentumPoint(
+  p: Extract<SimParams, { kind: 'angular_momentum_point' }>,
+): BuiltScene {
+  // The particle travels horizontally along a line offset from the origin by
+  // the impact parameter. The origin is the whole point, so it gets a marker.
+  const origin = Bodies.circle(0, 0, 5, { isStatic: true, label: 'pivot' })
+  // Matter's +y is down, so a POSITIVE impact parameter puts the particle below
+  // the origin on screen. That is what makes L = +mvd (counter-clockwise
+  // positive) rather than -mvd, matching the sign convention in analytic.ts.
+  const particle = Bodies.circle(-mToPx(2), mToPx(p.impact_parameter_m), mToPx(0.04), {
+    label: 'particle',
+    frictionAir: 0,
+    restitution: 1,
+  })
+  Body.setMass(particle, p.mass_kg)
+  Body.setVelocity(particle, { x: msToMatterVel(p.speed_ms), y: 0 })
+
+  return {
+    bodies: [origin, particle],
+    constraints: [],
+    byId: { pivot: origin, particle },
+    focusId: 'particle',
+    interactableIds: ['particle'],
+  }
+}
+
 export function buildScene(params: SimParams): BuiltScene {
   switch (params.kind) {
     case 'projectile':
@@ -219,6 +364,16 @@ export function buildScene(params: SimParams): BuiltScene {
       return pendulum(params)
     case 'collision_1d':
       return collision1d(params)
+    case 'rolling_without_slipping':
+      return rollingWithoutSlipping(params)
+    case 'circular_motion':
+      return circularMotion(params)
+    case 'charged_particle_magnetic':
+      return chargedParticle(params)
+    case 'rotating_frame':
+      return rotatingFrame(params)
+    case 'angular_momentum_point':
+      return angularMomentumPoint(params)
   }
 }
 

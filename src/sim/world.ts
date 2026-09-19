@@ -40,6 +40,13 @@ const { Engine, Composite, Body } = Matter
  */
 const FORCE_N_TO_MATTER = PX_PER_M / 1e6
 
+const GRAVITY_FREE: ReadonlySet<string> = new Set([
+  'circular_motion',
+  'charged_particle_magnetic',
+  'rotating_frame',
+  'angular_momentum_point',
+])
+
 /** Metric snapshot of one body. Everything here is SI; no pixels escape. */
 export interface BodyState {
   id: string
@@ -87,8 +94,14 @@ export class SimWorld {
   constructor(spec: ProblemSpec) {
     this.spec = spec
     this.params = toParams(spec)
-    // collision_1d is the one type with no gravity term of its own.
-    this.g_ms2 = 'g' in this.params ? this.params.g : 9.81
+    // Four of the hard-to-picture types run with gravity off. Gravity is not
+    // the lesson in any of them, and leaving it on would just drag the body out
+    // of frame mid-explanation.
+    this.g_ms2 = GRAVITY_FREE.has(this.params.kind)
+      ? 0
+      : 'g' in this.params
+        ? this.params.g
+        : 9.81
 
     this.engine = Engine.create()
     // Pin the scale to 1 so gravityY() is the sole gravity calibration point.

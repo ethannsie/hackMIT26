@@ -31,12 +31,21 @@ const GIVEN_NUMBER_KEYS = [
   'v1_ms',
   'v2_ms',
   'restitution',
+  'radius_m',
+  'charge_c',
+  'b_field_tesla',
+  'omega_rads',
+  'impact_parameter_m',
 ] as const
 
 const givenProperties: Record<string, unknown> = Object.fromEntries(
   GIVEN_NUMBER_KEYS.map((k) => [k, nullableNumber]),
 )
 givenProperties['body_motion'] = { type: ['string', 'null'], enum: ['sliding', 'rolling', null] }
+givenProperties['body_shape'] = {
+  type: ['string', 'null'],
+  enum: ['disc', 'sphere', 'hoop', 'point', null],
+}
 
 export const PROBLEM_SPEC_SCHEMA = {
   type: 'object',
@@ -48,7 +57,7 @@ export const PROBLEM_SPEC_SCHEMA = {
     given: {
       type: 'object',
       additionalProperties: false,
-      required: [...GIVEN_NUMBER_KEYS, 'body_motion'],
+      required: [...GIVEN_NUMBER_KEYS, 'body_motion', 'body_shape'],
       properties: givenProperties,
     },
     objects: {

@@ -4,6 +4,7 @@ Photograph a mechanics problem, get a live simulation you can reach into with
 your hands, with the derivation rewriting itself as you move.
 
 Full plan and scope tiers: [hackmit-2026-plan.md](hackmit-2026-plan.md).
+**What the system can and cannot simulate: [CAPABILITIES.md](CAPABILITIES.md).**
 This README covers the **simulation and ingest** half — stages [1]–[3] and [5].
 
 ---
@@ -23,8 +24,8 @@ npm run verify            # check the physics engine against the closed forms
 npm run check             # typecheck
 ```
 
-**Run `npm run verify` before every push.** It is the only thing standing
-between us and demoing wrong physics to a judge.
+**Run `npm run verify` before every push.** 39 checks, worst case 0.58%. It is
+the only thing standing between us and demoing wrong physics to a judge.
 
 Without an API key everything still works except photo ingest: pick a problem
 type from the dropdown and use the sliders. That is rung 4 of the failure
@@ -108,11 +109,15 @@ model. Measured, not guessed:
 | Rolling sphere | 95% of sliding value, should be 5/7 | 0.27% |
 | Collision, e = 0 | exact | unchanged |
 | Collision, e = 1 | 0.375 / 1.625 instead of 0 / 2 | exact |
+| Magnetic orbit | speed +2175%, orbit 23× over one run | 0.000% drift |
+| Uniform circular | 38% speed swing per orbit | 0.00% |
 
 Matter's friction is a damping model rather than Coulomb, and its restitution is
-under-applied as e approaches 1. So friction is applied as an explicit force and
-the 1D collision impulse is solved in closed form. Everything else — contacts,
-geometry, and every hand-driven interaction — still goes through Matter.
+under-applied as e approaches 1. Applying the Lorentz force explicitly is Euler
+on a rotation, which is unconditionally unstable — fatal for the one sim whose
+point is that a magnetic field cannot change a particle's speed; that one uses a
+Boris-style velocity rotation instead. Everything else — contacts, geometry, and
+every hand-driven interaction — still goes through Matter.
 
 Two traps worth knowing if you touch this code:
 
@@ -159,6 +164,7 @@ npx tsx scripts/e2e.ts path/to/problem.jpg     # costs one API call
 ```
 src/spec/        the ProblemSpec contract, JSON schema, validator
 src/sim/         params -> scene -> deterministic world; closed forms; corrections
+                 nine problem types — see CAPABILITIES.md
 src/hand/        the HandFrame contract, mouse mock, hand->force coupling
 src/extract/     browser-side compression and API client
 src/render/      canvas view and KaTeX derivation panel

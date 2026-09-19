@@ -56,11 +56,50 @@ export function renderDerivation(
   el.innerHTML = parts.join('')
 }
 
+/**
+ * Display names. An explicit map rather than a regex over the unit suffix:
+ * suffixes like _kgm2s and _m2s do not strip cleanly, and these headings are
+ * read by a judge standing three feet away.
+ */
+const LABELS: Record<string, string> = {
+  acceleration_ms2: 'Acceleration',
+  time_to_bottom_s: 'Time to bottom',
+  final_velocity_ms: 'Final velocity',
+  time_of_flight_s: 'Time of flight',
+  range_m: 'Range',
+  apex_height_m: 'Apex height',
+  period_s: 'Period',
+  angular_frequency_rads: 'Angular velocity',
+  max_speed_ms: 'Maximum speed',
+  normal_force_n: 'Normal force',
+  tension_n: 'Tension',
+  v1_final_ms: 'Final velocity, body 1',
+  v2_final_ms: 'Final velocity, body 2',
+  kinetic_energy_lost_j: 'Kinetic energy lost',
+  contact_point_speed_ms: 'Speed of the contact point',
+  top_point_speed_ms: 'Speed of the topmost point',
+  rotational_ke_fraction: 'Fraction of KE that is rotational',
+  centripetal_acceleration_ms2: 'Centripetal acceleration',
+  centripetal_force_n: 'Centripetal force',
+  orbit_radius_m: 'Orbit radius',
+  cyclotron_period_s: 'Cyclotron period',
+  cyclotron_frequency_rads: 'Cyclotron frequency',
+  work_done_j: 'Work done by the field',
+  coriolis_acceleration_ms2: 'Coriolis acceleration',
+  centrifugal_acceleration_ms2: 'Centrifugal acceleration',
+  angular_momentum_kgm2s: 'Angular momentum about O',
+  areal_velocity_m2s: 'Areal velocity (dA/dt)',
+  torque_nm: 'Torque about O',
+}
+
 function prettyQuantity(q: string): string {
-  return q
-    .replace(/_(ms2|ms|s|m|n|j|rads)$/, '')
-    .replace(/_/g, ' ')
-    .replace(/^\w/, (c) => c.toUpperCase())
+  return (
+    LABELS[q] ??
+    q
+      .replace(/_(ms2|ms|s|m|n|j|rads|kgm2s|nm|m2s)$/, '')
+      .replace(/_/g, ' ')
+      .replace(/^\w/, (c) => c.toUpperCase())
+  )
 }
 
 function format(v: number): string {

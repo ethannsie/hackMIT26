@@ -10,10 +10,20 @@
  */
 
 export const PROBLEM_TYPES = [
+  // The original four: the bread and butter of intro mechanics.
   'projectile',
   'inclined_plane',
   'pendulum',
   'collision_1d',
+  // The hard-to-picture five. Each one targets a specific place where a
+  // student's mental simulation reliably fails, and where a static textbook
+  // diagram cannot help because the interesting thing is a vector pointing
+  // somewhere nothing is moving.
+  'rolling_without_slipping',
+  'circular_motion',
+  'charged_particle_magnetic',
+  'rotating_frame',
+  'angular_momentum_point',
 ] as const
 export type ProblemType = (typeof PROBLEM_TYPES)[number]
 
@@ -33,6 +43,25 @@ export const ASKABLE = [
   'v1_final_ms',
   'v2_final_ms',
   'kinetic_energy_lost_j',
+  // rolling without slipping
+  'contact_point_speed_ms',
+  'top_point_speed_ms',
+  'rotational_ke_fraction',
+  // uniform circular motion
+  'centripetal_acceleration_ms2',
+  'centripetal_force_n',
+  // charged particle in a magnetic field
+  'orbit_radius_m',
+  'cyclotron_period_s',
+  'cyclotron_frequency_rads',
+  'work_done_j',
+  // rotating frame
+  'coriolis_acceleration_ms2',
+  'centrifugal_acceleration_ms2',
+  // angular momentum about a point
+  'angular_momentum_kgm2s',
+  'areal_velocity_m2s',
+  'torque_nm',
 ] as const
 export type Askable = (typeof ASKABLE)[number]
 
@@ -45,6 +74,8 @@ export const OBJECT_KINDS = [
   'ground',
   'wall',
   'pivot',
+  'wheel',
+  'particle',
 ] as const
 export type ObjectKind = (typeof OBJECT_KINDS)[number]
 
@@ -103,6 +134,31 @@ export interface SpecGiven {
   v1_ms: number | null
   v2_ms: number | null
   restitution: number | null
+
+  // rolling, circular motion — the radius of the rolling body or the orbit
+  radius_m: number | null
+  /**
+   * Mass distribution, which fixes the moment of inertia:
+   *   disc/cylinder I = 1/2 mr²    sphere I = 2/5 mr²
+   *   hoop/ring     I = mr²        point  I = mr²
+   * This is the whole reason a hoop and a disc race differently down a ramp.
+   */
+  body_shape: 'disc' | 'sphere' | 'hoop' | 'point' | null
+
+  // charged particle in a magnetic field. Signs matter: a negative charge or a
+  // reversed field orbits the other way, which is most of the lesson.
+  charge_c: number | null
+  /** Out of the page is positive, into the page negative. */
+  b_field_tesla: number | null
+
+  // rotating frame — frame angular velocity, positive counter-clockwise
+  omega_rads: number | null
+
+  /**
+   * Angular momentum about a point: the perpendicular distance from the chosen
+   * origin to the particle's line of motion. Signed, because L's direction is.
+   */
+  impact_parameter_m: number | null
 }
 
 export interface ProblemSpec {

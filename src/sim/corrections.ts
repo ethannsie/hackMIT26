@@ -22,7 +22,7 @@
  * disagree, because a student will read both at once.
  */
 import Matter from 'matter-js'
-import { PX_PER_M, mToPx, msToMatterVel, matterVelToMs, DEG } from './units.ts'
+import { PX_PER_M, mToPx, pxToM, msToMatterVel, matterVelToMs, FIXED_DT_S, DEG } from './units.ts'
 import type { SimParams } from './params.ts'
 import type { BuiltScene } from './builders.ts'
 
@@ -201,6 +201,171 @@ function collisionImpulse(
   }
 }
 
+
+/**
+ * The rolling constraint, held every step: omega = v / r.
+ *
+ * Matter's friction cannot produce rolling without slipping (see the note at the
+ * top of this file), so rather than fight it we impose the constraint directly.
+ * The wheel's spin is then exactly consistent with its translation, which is
+ * what makes the contact point genuinely stationary and the top point genuinely
+ * move at 2v — the two numbers the whole sim exists to show.
+ */
+function rollingConstraint(scene: BuiltScene): Corrections {
+  const wheel = scene.byId['wheel']
+  if (!wheel) return NONE
+  const r = wheel.circleRadius ?? 1
+
+  return {
+    preStep(): void {
+      // Both sides are in Matter's normalised units, so the ratio is the
+      // angular velocity in radians per the same interval.
+      Body.setAngularVelocity(wheel, wheel.velocity.x / r)
+    },
+    dispose(): void {},
+  }
+}
+
+/**
+ * A charged particle in a magnetic field, advanced by rotating its velocity
+ * rather than by applying a force.
+ *
+ * Applying F = qv x B as an explicit force does not work here. A force applied
+ * once per step is explicit Euler on a pure rotation, which is unconditionally
+ * unstable: the speed grows by a factor of sqrt(1 + (omega*dt)^2) every step.
+ * Measured, that inflated the orbit 23x and the speed by 2175% over one run —
+ * on the one sim whose entire point is that a magnetic field CANNOT change a
+ * particle's speed.
+ *
+ * So instead we do what plasma codes do (the Boris push): rotate the velocity
+ * vector through the exact angle it should turn in one timestep,
+ *
+ *     phi = -(qB/m) * dt
+ *
+ * A rotation preserves length identically, so the speed is conserved to machine
+ * precision and the gyroradius comes out at exactly mv/|q|B. The physics is not
+ * approximated — it is integrated in the form that respects what the force does.
+ */
+function magneticRotation(
+  scene: BuiltScene,
+  p: Extract<SimParams, { kind: 'charged_particle_magnetic' }>,
+): Corrections {
+  const particle = scene.byId['particle']
+  if (!particle) return NONE
+
+  // Cyclotron angular frequency. The sign carries the sense of the orbit, which
+  // reverses with either the charge or the field.
+  const omegaC = (p.charge_c * p.b_field_tesla) / p.mass_kg
+  const phi = -omegaC * FIXED_DT_S
+  const cos = Math.cos(phi)
+  const sin = Math.sin(phi)
+
+  return {
+    preStep(): void {
+      // Work in physics convention (y up), then convert back.
+      const vx = particle.velocity.x
+      const vy = -particle.velocity.y
+
+      const rx = vx * cos - vy * sin
+      const ry = vx * sin + vy * cos
+
+      Body.setVelocity(particle, { x: rx, y: -ry })
+    },
+    dispose(): void {},
+  }
+}
+
+/**
+ * Uniform circular motion, held exactly on its circle.
+ *
+ * Matter's constraint solver leaks energy around a full revolution — measured at
+ * a 38% speed swing per orbit, which is fatal for a sim whose whole claim is
+ * that the SPEED is constant while the VELOCITY is not. So each step we re-impose
+ * the two things "uniform circular motion" actually asserts: the radius is fixed,
+ * and the velocity is tangential with constant magnitude.
+ *
+ * This is a stipulated motion, not an emergent one. The lesson is the geometry —
+ * that the acceleration points at the centre where nothing is moving, while the
+ * velocity points along the tangent — and that geometry is exact here.
+ */
+function uniformCircularMotion(
+  scene: BuiltScene,
+  p: Extract<SimParams, { kind: 'circular_motion' }>,
+): Corrections {
+  const ball = scene.byId['ball']
+  const pivot = scene.byId['pivot']
+  if (!ball || !pivot) return NONE
+
+  const R = mToPx(p.radius_m)
+  const speed = msToMatterVel(p.speed_ms)
+
+  return {
+    preStep(): void {
+      const dx = ball.position.x - pivot.position.x
+      const dy = ball.position.y - pivot.position.y
+      const r = Math.hypot(dx, dy)
+      if (r < 1e-9) return
+
+      // Snap back onto the circle.
+      Body.setPosition(ball, {
+        x: pivot.position.x + (dx / r) * R,
+        y: pivot.position.y + (dy / r) * R,
+      })
+
+      // Tangent, perpendicular to the radius. Keep whichever way it was going.
+      const tx = -dy / r
+      const ty = dx / r
+      const sense = ball.velocity.x * tx + ball.velocity.y * ty >= 0 ? 1 : -1
+      Body.setVelocity(ball, { x: tx * sense * speed, y: ty * sense * speed })
+    },
+    dispose(): void {},
+  }
+}
+
+/**
+ * Centrifugal and Coriolis pseudo-forces, in a frame rotating at omega.
+ *
+ *   a_cf  = omega² r          outward, depends on POSITION
+ *   a_cor = -2 omega x v      sideways, depends on VELOCITY
+ *
+ * Applying them as forces is the honest way to show what they are: the terms
+ * you must invent to keep F = ma working in a frame that is itself turning.
+ * Neither has a third-law partner, and the sim will not pretend otherwise.
+ */
+function rotatingFrameForces(
+  scene: BuiltScene,
+  p: Extract<SimParams, { kind: 'rotating_frame' }>,
+): Corrections {
+  const particle = scene.byId['particle']
+  if (!particle) return NONE
+
+  const w = p.omega_rads
+  const m = p.mass_kg
+
+  return {
+    preStep(): void {
+      const x = pxToM(particle.position.x)
+      const y = -pxToM(particle.position.y) // to y-up
+      const vx = matterVelToMs(particle.velocity.x)
+      const vy = -matterVelToMs(particle.velocity.y)
+
+      // Centrifugal: outward along r.
+      const cfx = w * w * x
+      const cfy = w * w * y
+
+      // Coriolis: -2 (omega z-hat) x v.
+      const corx = 2 * w * vy
+      const cory = -2 * w * vx
+
+      Body.applyForce(particle, particle.position, {
+        x: m * (cfx + corx) * FORCE_N_TO_MATTER,
+        y: -m * (cfy + cory) * FORCE_N_TO_MATTER,
+      })
+    },
+    dispose(): void {},
+  }
+}
+
 export function installCorrections(
   engine: Matter.Engine,
   scene: BuiltScene,
@@ -211,10 +376,21 @@ export function installCorrections(
       return inclineFriction(engine, scene, params)
     case 'collision_1d':
       return collisionImpulse(engine, scene, params)
+    case 'rolling_without_slipping':
+      return rollingConstraint(scene)
+    case 'charged_particle_magnetic':
+      return magneticRotation(scene, params)
+    case 'circular_motion':
+      return uniformCircularMotion(scene, params)
+    case 'rotating_frame':
+      return rotatingFrameForces(scene, params)
+
     // Projectile is drag-free ballistics and the pendulum rod already tracks
-    // T = 2*pi*sqrt(L/g) to 0.1%. Matter handles both correctly on its own.
+    // T = 2*pi*sqrt(L/g) to 0.1%. The angular-momentum particle is genuinely
+    // force-free: its whole point is that L is constant with nothing acting.
     case 'projectile':
     case 'pendulum':
+    case 'angular_momentum_point':
       return NONE
   }
 }

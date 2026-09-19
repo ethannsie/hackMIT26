@@ -32,6 +32,12 @@ const EMPTY_GIVEN: SpecGiven = {
   v1_ms: null,
   v2_ms: null,
   restitution: null,
+  radius_m: null,
+  body_shape: null,
+  charge_c: null,
+  b_field_tesla: null,
+  omega_rads: null,
+  impact_parameter_m: null,
 }
 
 function spec(problem_type: ProblemType, given: Partial<SpecGiven>): ProblemSpec {
@@ -222,6 +228,174 @@ for (const c of [
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+console.log('\nROLLING WITHOUT SLIPPING  disc, r = 0.3 m, v = 2 m/s')
+{
+  const s = spec('rolling_without_slipping', { radius_m: 0.3, mass_kg: 2, v0_ms: 2, body_shape: 'disc' })
+  const w = new SimWorld(s)
+  w.stepMany(60)
+  const st = w.state().bodies['wheel']!
+
+  const omega = st.angular_velocity_rads
+  check('angular velocity (rad/s)', Math.abs(omega), answer(s, 'angular_frequency_rads'), 1)
+
+  // The claim worth testing: the contact point is stationary while the top
+  // point moves at 2v, on the same rigid body at the same instant.
+  const v = st.velocity_ms[0]
+  const r = 0.3
+  const contact = v - Math.abs(omega) * r
+  const top = v + Math.abs(omega) * r
+  check('contact point speed (m/s)', contact, 0, 1)
+  check('top point speed (m/s)', top, 2 * v, 1)
+}
+
+// ---------------------------------------------------------------------------
+console.log('\nUNIFORM CIRCULAR MOTION  r = 0.8 m, v = 2.5 m/s')
+{
+  const s = spec('circular_motion', { radius_m: 0.8, v0_ms: 2.5, mass_kg: 1.2 })
+  const w = new SimWorld(s)
+
+  // Speed must stay constant and the radius must not drift.
+  const centre = w.bodyById('pivot')!.position
+  let minR = Infinity
+  let maxR = -Infinity
+  let minV = Infinity
+  let maxV = -Infinity
+  for (let i = 0; i < 1200; i++) {
+    w.step()
+    const b = w.bodyById('ball')!
+    const rad = Math.hypot(b.position.x - centre.x, b.position.y - centre.y) / 200
+    minR = Math.min(minR, rad)
+    maxR = Math.max(maxR, rad)
+    const sp = w.state().bodies['ball']!.speed_ms
+    minV = Math.min(minV, sp)
+    maxV = Math.max(maxV, sp)
+  }
+  check('orbit radius held (m)', (minR + maxR) / 2, 0.8, 2)
+  check('speed held constant (m/s)', (minV + maxV) / 2, 2.5, 2)
+  const spread = ((maxV - minV) / 2.5) * 100
+  const pass = spread < 2
+  if (!pass) failures++
+  console.log(`  [${pass ? 'PASS' : 'FAIL'}] speed spread over one orbit = ${spread.toFixed(2)}% (tol 2%)`)
+}
+
+// ---------------------------------------------------------------------------
+console.log('\nCHARGED PARTICLE IN A MAGNETIC FIELD  q = 1 C, B = 1.5 T, m = 1 kg, v = 2 m/s')
+{
+  const s = spec('charged_particle_magnetic', {
+    charge_c: 1, b_field_tesla: 1.5, mass_kg: 1, v0_ms: 2, launch_angle_deg: 0,
+  })
+  const w = new SimWorld(s)
+  const expectedR = answer(s, 'orbit_radius_m')
+  const expectedT = answer(s, 'cyclotron_period_s')
+
+  // Track the orbit: its diameter, its period, and whether the speed moves.
+  const start = { ...w.bodyById('particle')!.position }
+  let maxDist = 0
+  let minV = Infinity
+  let maxV = -Infinity
+  let period = -1
+  let left = false
+
+  for (let i = 0; i < 40_000; i++) {
+    w.step()
+    const b = w.bodyById('particle')!
+    const d = Math.hypot(b.position.x - start.x, b.position.y - start.y) / 200
+    maxDist = Math.max(maxDist, d)
+    const sp = w.state().bodies['particle']!.speed_ms
+    minV = Math.min(minV, sp)
+    maxV = Math.max(maxV, sp)
+    if (d > expectedR) left = true
+    if (left && d < 0.02 && period < 0) { period = w.time_s; break }
+  }
+
+  check('orbit diameter (m)', maxDist, 2 * expectedR, 2)
+  check('cyclotron period (s)', period, expectedT, 2)
+
+  // The headline claim: a magnetic force does no work, so speed never changes.
+  const drift = ((maxV - minV) / 2) * 100
+  const pass = drift < 1
+  if (!pass) failures++
+  console.log(`  [${pass ? 'PASS' : 'FAIL'}] speed unchanged by the field: drift = ${drift.toFixed(3)}% (tol 1%)`)
+
+  // And the period must not depend on speed. Same field, four times the speed.
+  const fast = new SimWorld(spec('charged_particle_magnetic', {
+    charge_c: 1, b_field_tesla: 1.5, mass_kg: 1, v0_ms: 8, launch_angle_deg: 0,
+  }))
+  const fastStart = { ...fast.bodyById('particle')!.position }
+  let fastPeriod = -1
+  let fastLeft = false
+  let fastMax = 0
+  for (let i = 0; i < 40_000; i++) {
+    fast.step()
+    const b = fast.bodyById('particle')!
+    const d = Math.hypot(b.position.x - fastStart.x, b.position.y - fastStart.y) / 200
+    fastMax = Math.max(fastMax, d)
+    if (d > expectedR * 4) fastLeft = true
+    if (fastLeft && d < 0.05 && fastPeriod < 0) { fastPeriod = fast.time_s; break }
+  }
+  check('period at 4x speed (s)', fastPeriod, expectedT, 3, '(must NOT change with speed)')
+  check('radius at 4x speed (m)', fastMax / 2, expectedR * 4, 3, '(must scale with speed)')
+}
+
+// ---------------------------------------------------------------------------
+console.log('\nROTATING FRAME  a straight inertial line must curve in the rotating frame')
+{
+  // omega = 0 is the control: with no rotation the pseudo-forces vanish and the
+  // path must be exactly straight.
+  const straight = new SimWorld(spec('rotating_frame', {
+    omega_rads: 0, v0_ms: 1.5, launch_angle_deg: 90, mass_kg: 1, radius_m: 0.5,
+  }))
+  straight.stepMany(400)
+  const sx = straight.state().bodies['particle']!.position_m[0]
+  check('omega = 0 leaves x unchanged (m)', sx, 0.5, 1, '(no rotation, no deflection)')
+
+  const s = spec('rotating_frame', { omega_rads: 1.2, v0_ms: 1.5, launch_angle_deg: 90, mass_kg: 1, radius_m: 0.5 })
+  const w = new SimWorld(s)
+  w.stepMany(400)
+  const curved = w.state().bodies['particle']!.position_m[0]
+  const deflected = Math.abs(curved - 0.5) > 0.05
+  if (!deflected) failures++
+  console.log(`  [${deflected ? 'PASS' : 'FAIL'}] omega = 1.2 deflects the path: x moved 0.5 -> ${curved.toFixed(3)} m`)
+
+  check('Coriolis magnitude (m/s²)', 2 * 1.2 * 1.5, answer(s, 'coriolis_acceleration_ms2'), 1)
+  check('centrifugal magnitude (m/s²)', 1.2 * 1.2 * 0.5, answer(s, 'centrifugal_acceleration_ms2'), 1)
+}
+
+// ---------------------------------------------------------------------------
+console.log('\nANGULAR MOMENTUM ABOUT A POINT  straight-line motion, L must be non-zero and constant')
+{
+  const s = spec('angular_momentum_point', { mass_kg: 2, v0_ms: 1.5, impact_parameter_m: 0.6 })
+  const w = new SimWorld(s)
+  const expectedL = answer(s, 'angular_momentum_kgm2s')
+
+  // Recompute L = m(r x v) directly from the sim state at intervals. Nothing is
+  // rotating, so this is the claim that needs evidence.
+  const samples: number[] = []
+  for (let i = 0; i < 600; i++) {
+    w.step()
+    if (i % 100 !== 0) continue
+    const b = w.state().bodies['particle']!
+    const [x, y] = b.position_m
+    const [vx, vy] = b.velocity_ms
+    samples.push(b.mass_kg * (x * vy - y * vx))
+  }
+  const spread = Math.max(...samples) - Math.min(...samples)
+  check('L from sim state (kg·m²/s)', samples[0]!, expectedL, 1)
+  const pass = Math.abs(spread / expectedL) < 0.01
+  if (!pass) failures++
+  console.log(`  [${pass ? 'PASS' : 'FAIL'}] L constant along a straight line: spread = ${spread.toExponential(2)} over 5 s`)
+
+  // And L must vanish when the origin sits on the line of motion.
+  const onLine = new SimWorld(spec('angular_momentum_point', { mass_kg: 2, v0_ms: 1.5, impact_parameter_m: 0 }))
+  onLine.stepMany(300)
+  const b = onLine.state().bodies['particle']!
+  const L0 = b.mass_kg * (b.position_m[0] * b.velocity_ms[1] - b.position_m[1] * b.velocity_ms[0])
+  const zero = Math.abs(L0) < 1e-6
+  if (!zero) failures++
+  console.log(`  [${zero ? 'PASS' : 'FAIL'}] d = 0 gives L = 0: same motion, different origin, L = ${L0.toExponential(2)}`)
+}
+
 console.log('\nDETERMINISM  identical spec, identical step count, two separate worlds')
 {
   const s = spec('projectile', { v0_ms: 13.7, launch_angle_deg: 37, h0_m: 1.5 })

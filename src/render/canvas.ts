@@ -22,6 +22,8 @@ const COLORS = {
   velocity: '#5ee6a8',
   accel: '#ff7b72',
   hand: '#ff9ecb',
+  concept: '#c792ea',
+  sweep: '#c792ea',
   text: '#c9d1d9',
   dim: '#6e7681',
 }
@@ -32,6 +34,9 @@ export class CanvasView {
   private scale = 1
   private originX = 0
   private originY = 0
+
+  /** Recent focus-body positions, for the swept-area overlay. */
+  private trail: { x: number; y: number }[] = []
 
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d')
@@ -159,9 +164,182 @@ export class CanvasView {
     ctx.fillText(label, toX + 6, toY - 6)
   }
 
+
+  /**
+   * Type-specific annotations for the hard-to-picture problems.
+   *
+   * This is the payload for those five. Each one exists because a vector points
+   * somewhere nothing is moving, and a static diagram cannot show that. Drawing
+   * the velocity alone would miss the entire lesson.
+   */
+  private drawConceptOverlay(world: SimWorld, state: SimState): void {
+    const { ctx } = this
+    const p = world.params
+
+    const focus = world.bodyById(state.focus.id)
+    if (!focus) return
+    const fx = this.sx(focus.position.x)
+    const fy = this.sy(focus.position.y)
+
+    switch (p.kind) {
+      case 'circular_motion': {
+        const pivot = world.bodyById('pivot')
+        if (!pivot) break
+        const cx = this.sx(pivot.position.x)
+        const cy = this.sy(pivot.position.y)
+
+        // Acceleration points at the centre — where nothing is moving and no
+        // object sits. That is the whole misconception this sim targets.
+        const ac = (p.speed_ms * p.speed_ms) / p.radius_m
+        const dx = cx - fx
+        const dy = cy - fy
+        const len = Math.hypot(dx, dy) || 1
+        const draw = Math.min(len * 0.8, ac * 6)
+        this.drawArrow(fx, fy, (dx / len) * draw, (dy / len) * draw, COLORS.accel, `a = ${ac.toFixed(2)} m/s²`)
+
+        ctx.setLineDash([4, 4])
+        ctx.strokeStyle = COLORS.dim
+        ctx.beginPath()
+        ctx.arc(cx, cy, len, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.setLineDash([])
+
+        ctx.fillStyle = COLORS.dim
+        ctx.font = '11px ui-monospace, monospace'
+        ctx.fillText('nothing is moving here', cx + 8, cy - 8)
+        break
+      }
+
+      case 'charged_particle_magnetic': {
+        // F = qv x B, perpendicular to BOTH the velocity and the field.
+        const [vx, vy] = state.focus.velocity_ms
+        const qB = p.charge_c * p.b_field_tesla
+        const Fx = qB * vy
+        const Fy = -qB * vx
+        this.drawArrow(fx, fy, Fx * 14, -Fy * 14, COLORS.accel, `F = qv×B = ${Math.hypot(Fx, Fy).toFixed(2)} N`)
+
+        // The field itself fills the plane, so show it as a lattice of the
+        // conventional out-of-page dots (or into-page crosses).
+        ctx.strokeStyle = COLORS.concept
+        ctx.fillStyle = COLORS.concept
+        ctx.globalAlpha = 0.35
+        const gap = 70
+        for (let gx = gap / 2; gx < this.canvas.clientWidth; gx += gap) {
+          for (let gy = gap / 2; gy < this.canvas.clientHeight; gy += gap) {
+            ctx.beginPath()
+            if (p.b_field_tesla >= 0) {
+              ctx.arc(gx, gy, 2, 0, Math.PI * 2)
+              ctx.fill()
+            } else {
+              ctx.moveTo(gx - 3, gy - 3)
+              ctx.lineTo(gx + 3, gy + 3)
+              ctx.moveTo(gx + 3, gy - 3)
+              ctx.lineTo(gx - 3, gy + 3)
+              ctx.stroke()
+            }
+          }
+        }
+        ctx.globalAlpha = 1
+        ctx.fillStyle = COLORS.concept
+        ctx.font = '11px ui-monospace, monospace'
+        ctx.fillText(
+          `B = ${p.b_field_tesla.toFixed(2)} T ${p.b_field_tesla >= 0 ? 'out of page' : 'into page'}`,
+          12,
+          this.canvas.clientHeight - 14,
+        )
+        break
+      }
+
+      case 'rotating_frame': {
+        const [vx, vy] = state.focus.velocity_ms
+        const [x, y] = state.focus.position_m
+        const w = p.omega_rads
+
+        // Coriolis depends on velocity; centrifugal depends on position. Showing
+        // both at once is the only way the difference lands.
+        const corx = 2 * w * vy
+        const cory = -2 * w * vx
+        this.drawArrow(fx, fy, corx * 18, -cory * 18, COLORS.accel, 'Coriolis (∝ v)')
+
+        const cfx = w * w * x
+        const cfy = w * w * y
+        this.drawArrow(fx, fy, cfx * 18, -cfy * 18, COLORS.concept, 'centrifugal (∝ r)')
+        break
+      }
+
+      case 'angular_momentum_point': {
+        const origin = world.bodyById('pivot')
+        if (!origin) break
+        const ox = this.sx(origin.position.x)
+        const oy = this.sy(origin.position.y)
+
+        // The r vector, and the area it sweeps. Equal areas in equal times, with
+        // no orbit and no force anywhere — Kepler's second law stripped bare.
+        ctx.strokeStyle = COLORS.concept
+        ctx.setLineDash([5, 5])
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.moveTo(ox, oy)
+        ctx.lineTo(fx, fy)
+        ctx.stroke()
+        ctx.setLineDash([])
+
+        if (this.trail.length > 1) {
+          ctx.fillStyle = COLORS.sweep
+          ctx.globalAlpha = 0.18
+          ctx.beginPath()
+          ctx.moveTo(ox, oy)
+          for (const pt of this.trail) ctx.lineTo(this.sx(pt.x), this.sy(pt.y))
+          ctx.closePath()
+          ctx.fill()
+          ctx.globalAlpha = 1
+        }
+
+        const L = state.focus.mass_kg *
+          (state.focus.position_m[0] * state.focus.velocity_ms[1] -
+            state.focus.position_m[1] * state.focus.velocity_ms[0])
+        ctx.fillStyle = COLORS.concept
+        ctx.font = '11px ui-monospace, monospace'
+        ctx.fillText(`L = r × p = ${L.toFixed(3)} kg·m²/s  (constant)`, ox + 10, oy + 16)
+        ctx.fillText('straight line, no rotation, L ≠ 0', ox + 10, oy + 32)
+        break
+      }
+
+      case 'rolling_without_slipping': {
+        const r = focus.circleRadius ?? 0
+        const v = state.focus.velocity_ms[0]
+
+        // Bottom: stationary. Top: 2v. Same rigid body, same instant.
+        const bx = fx
+        const by = this.sy(focus.position.y + r)
+        ctx.fillStyle = COLORS.accel
+        ctx.beginPath()
+        ctx.arc(bx, by, 5, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.font = '11px ui-monospace, monospace'
+        ctx.fillText('contact point: v = 0', bx + 10, by + 4)
+
+        const tx = fx
+        const ty = this.sy(focus.position.y - r)
+        this.drawArrow(tx, ty, v * 2 * 22, 0, COLORS.concept, `top: ${(2 * v).toFixed(2)} m/s = 2v`)
+        break
+      }
+
+      default:
+        break
+    }
+  }
+
   draw(world: SimWorld, state: SimState, coupling: CouplingState): void {
     this.resize()
     this.fit(world)
+
+    const focusBody = world.bodyById(state.focus.id)
+    if (focusBody) {
+      this.trail.push({ x: focusBody.position.x, y: focusBody.position.y })
+      if (this.trail.length > 240) this.trail.shift()
+    }
+    if (state.steps === 0) this.trail.length = 0
 
     const { ctx } = this
     ctx.fillStyle = COLORS.bg
@@ -207,6 +385,8 @@ export class CanvasView {
         `v = ${state.focus.speed_ms.toFixed(2)} m/s`,
       )
     }
+
+    this.drawConceptOverlay(world, state)
 
     // Hand contact.
     if (coupling.contactPoint_m) {

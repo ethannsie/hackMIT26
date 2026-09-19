@@ -41,7 +41,21 @@ RULES
    - below 0.6  blurry, cropped, handwritten, ambiguous type, or a multi-part problem
    Anything below 0.6 makes the app ask the student to confirm the type, which is a good outcome. Overstating confidence is worse than understating it.
 
-11. raw_text: transcribe the problem statement verbatim as printed. This is quoted back to the student, so do not paraphrase, summarise, or correct it.
+11. Fields for the harder problem types:
+   - radius_m: the radius of a rolling body, or the radius of a circular path.
+   - body_shape: "disc" (disc, cylinder, wheel), "sphere" (solid ball), "hoop" (ring, hoop, thin-walled cylinder), "point". This sets the moment of inertia, so get it right when the problem names a shape; null if it does not.
+   - charge_c and b_field_tesla: KEEP THE SIGNS. A negative charge, or a field into the page, reverses the orbit. Record a field directed out of the page as positive and into the page as negative. A field given in gauss converts to tesla (1 G = 1e-4 T).
+   - omega_rads: angular velocity of a rotating frame, turntable, or merry-go-round. Positive is counter-clockwise. Convert rpm to rad/s.
+   - impact_parameter_m: for angular momentum about a point, the PERPENDICULAR distance from the stated origin to the particle's line of motion. Not the distance to the particle, which changes as it moves.
+
+12. Choosing between the harder types:
+   - Use rolling_without_slipping when the question is about the rolling motion itself: the contact point, the top point, or how energy splits between translation and rotation. Use inclined_plane with body_motion "rolling" when a body rolls DOWN A RAMP.
+   - Use circular_motion for steady motion in a circle at constant speed.
+   - Use charged_particle_magnetic only for a charge moving in a MAGNETIC field. A charge in an electric field is not in our library.
+   - Use rotating_frame when the problem explicitly asks about the view from a rotating turntable, merry-go-round or planet, or names the Coriolis or centrifugal effect.
+   - Use angular_momentum_point when a particle moves in a straight line and the question asks for its angular momentum about some point.
+
+13. raw_text: transcribe the problem statement verbatim as printed. This is quoted back to the student, so do not paraphrase, summarise, or correct it.
 
 If the image contains several problems, extract only the first complete one and lower confidence to reflect the ambiguity.`
 

@@ -13,6 +13,21 @@ import type { SimParams } from './params.ts'
 
 const { Bodies, Body, Composite, Constraint } = Matter
 
+/**
+ * The natural framing for a problem, in scene metres (y UP).
+ *
+ * Computed from the parameters rather than from live body positions. Refitting
+ * the camera to whatever the bodies are doing makes the scale jitter every
+ * frame and zooms out forever when something rolls away; a stable box does not.
+ * The view pans to follow a body that leaves it, but never rescales.
+ */
+export interface ViewBox {
+  minX_m: number
+  maxX_m: number
+  minY_m: number
+  maxY_m: number
+}
+
 export interface BuiltScene {
   bodies: Matter.Body[]
   constraints: Matter.Constraint[]
@@ -22,16 +37,36 @@ export interface BuiltScene {
   focusId: string
   /** Ids the hand is allowed to push. Derived from the spec, enforced by the engine. */
   interactableIds: string[]
+  /** Stable camera framing for this problem. */
+  view: ViewBox
 }
 
 const GROUND_THICKNESS_PX = 40
 const WALL = { isStatic: true, friction: 0.6, restitution: 0.2 }
 
-function ground(widthM = 40): Matter.Body {
+/**
+ * The floor.
+ *
+ * Width matters more than it looks: a 20 m/s projectile at 45° ranges 40.7 m,
+ * which used to overshoot the fixed 40 m floor entirely and fall through the
+ * world. Callers size it to the motion they expect.
+ */
+function ground(widthM = 400): Matter.Body {
   return Bodies.rectangle(0, GROUND_THICKNESS_PX / 2, mToPx(widthM), GROUND_THICKNESS_PX, {
     ...WALL,
     label: 'ground',
   })
+}
+
+/**
+ * Ground long enough that a landed body cannot roll off it.
+ *
+ * Generous on purpose. A static body costs nothing, and the alternative — a ball
+ * that rolls past the edge and falls out of the world — is a visible failure.
+ * The camera pans rather than rescales, so a long floor does not shrink the view.
+ */
+function groundForRange(rangeM: number): Matter.Body {
+  return ground(Math.max(400, rangeM * 20))
 }
 
 function projectile(p: Extract<SimParams, { kind: 'projectile' }>): BuiltScene {
@@ -54,13 +89,26 @@ function projectile(p: Extract<SimParams, { kind: 'projectile' }>): BuiltScene {
     y: -msToMatterVel(p.v0_ms * Math.sin(th)),
   })
 
-  const g = ground()
+  // Size the floor to where this shot will actually land.
+  const th2 = p.angle_deg * DEG
+  const vy0 = p.v0_ms * Math.sin(th2)
+  const tf = (vy0 + Math.sqrt(Math.max(0, vy0 * vy0 + 2 * p.g * p.h0_m))) / p.g
+  const expectedRange = Math.abs(p.v0_ms * Math.cos(th2) * tf)
+
+  const apex = p.h0_m + (vy0 * vy0) / (2 * p.g)
+  const g = groundForRange(expectedRange)
   return {
     bodies: [g, ball],
     constraints: [],
     byId: { ground: g, projectile: ball },
     focusId: 'projectile',
     interactableIds: ['projectile'],
+    view: {
+      minX_m: -0.5,
+      maxX_m: Math.max(2, expectedRange * 1.1),
+      minY_m: -0.18,
+      maxY_m: Math.max(1.5, apex * 1.2),
+    },
   }
 }
 
@@ -124,12 +172,20 @@ function inclinedPlane(p: Extract<SimParams, { kind: 'inclined_plane' }>): Built
   }
 
   const g = ground()
+  const spanX = p.ramp_length_m * Math.cos(th)
+  const spanY = p.ramp_length_m * Math.sin(th)
   return {
     bodies: [g, ramp, block],
     constraints: [],
     byId: { ground: g, ramp, block },
     focusId: 'block',
     interactableIds: ['block'], // the ramp is static; tilting it is a separate gesture
+    view: {
+      minX_m: -0.35,
+      maxX_m: spanX + 0.55,
+      minY_m: -0.18,
+      maxY_m: spanY + 0.35,
+    },
   }
 }
 
@@ -154,12 +210,19 @@ function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): BuiltScene {
   // reading its velocity back each step decayed a 40° release to 18° in 30 s.
   // The rod is integrated in corrections.ts instead, and drawn by the renderer.
   const g = ground()
+  const pivotY_m = p.length_m + 0.3
   return {
     bodies: [g, pivot, bob],
     constraints: [],
     byId: { ground: g, pivot, bob },
     focusId: 'bob',
     interactableIds: ['bob'],
+    view: {
+      minX_m: -(p.length_m + 0.4),
+      maxX_m: p.length_m + 0.4,
+      minY_m: -0.3,
+      maxY_m: pivotY_m + 0.4,
+    },
   }
 }
 
@@ -198,6 +261,7 @@ function collision1d(p: Extract<SimParams, { kind: 'collision_1d' }>): BuiltScen
     byId: { ground: g, cart1, cart2 },
     focusId: 'cart1',
     interactableIds: ['cart1', 'cart2'],
+    view: { minX_m: -1.6, maxX_m: 1.6, minY_m: -0.3, maxY_m: 1.0 },
   }
 }
 
@@ -223,7 +287,7 @@ function rollingWithoutSlipping(
   // omega = v/r is the rolling constraint, applied here and held every step.
   Body.setAngularVelocity(wheel, msToMatterVel(p.v_ms) / r)
 
-  const g = ground(80)
+  const g = ground(400)
   g.friction = 0
   g.frictionStatic = 0
 
@@ -233,6 +297,8 @@ function rollingWithoutSlipping(
     byId: { ground: g, wheel },
     focusId: 'wheel',
     interactableIds: ['wheel'],
+    // The wheel travels, so the view pans with it at a fixed scale.
+    view: { minX_m: -2.2, maxX_m: 2.2, minY_m: -0.3, maxY_m: p.radius_m * 2 + 1.2 },
   }
 }
 
@@ -260,12 +326,19 @@ function circularMotion(p: Extract<SimParams, { kind: 'circular_motion' }>): Bui
     label: 'string',
   })
 
+  const R_m = p.radius_m
   return {
     bodies: [pivot, ball],
     constraints: [string],
     byId: { pivot, ball },
     focusId: 'ball',
     interactableIds: ['ball'],
+    view: {
+      minX_m: -(R_m + 0.4),
+      maxX_m: R_m + 0.4,
+      minY_m: -0.2,
+      maxY_m: 2 * R_m + 0.9,
+    },
   }
 }
 
@@ -285,12 +358,22 @@ function chargedParticle(
   })
 
   // No ground: this is a particle in a field region, not a scene with a floor.
+  const r = Math.abs(p.charge_c * p.b_field_tesla) > 1e-9
+    ? (p.mass_kg * p.speed_ms) / Math.abs(p.charge_c * p.b_field_tesla)
+    : 3
+  const pad = Math.max(0.5, r * 0.35)
   return {
     bodies: [particle],
     constraints: [],
     byId: { particle },
     focusId: 'particle',
     interactableIds: ['particle'],
+    view: {
+      minX_m: -(2 * r + pad),
+      maxX_m: 2 * r + pad,
+      minY_m: -(2 * r + pad),
+      maxY_m: 2 * r + pad,
+    },
   }
 }
 
@@ -311,12 +394,14 @@ function rotatingFrame(p: Extract<SimParams, { kind: 'rotating_frame' }>): Built
   // visible rather than implied.
   const axis = Bodies.circle(0, 0, 4, { isStatic: true, label: 'pivot' })
 
+  const reach = Math.max(2.5, p.r0_m + p.speed_ms * 2)
   return {
     bodies: [axis, particle],
     constraints: [],
     byId: { pivot: axis, particle },
     focusId: 'particle',
     interactableIds: ['particle'],
+    view: { minX_m: -reach, maxX_m: reach, minY_m: -reach, maxY_m: reach },
   }
 }
 
@@ -337,12 +422,14 @@ function angularMomentumPoint(
   Body.setMass(particle, p.mass_kg)
   Body.setVelocity(particle, { x: msToMatterVel(p.speed_ms), y: 0 })
 
+  const span = Math.max(2.5, Math.abs(p.impact_parameter_m) * 2.5)
   return {
     bodies: [origin, particle],
     constraints: [],
     byId: { pivot: origin, particle },
     focusId: 'particle',
     interactableIds: ['particle'],
+    view: { minX_m: -span, maxX_m: span, minY_m: -span * 0.6, maxY_m: span * 0.6 },
   }
 }
 

@@ -39,6 +39,7 @@ console.log('\nISOLATED SPRING  a lone component must still match its closed for
     name: 'spring test',
     gravity_ms2: 0,
     ground: false,
+    arena: { width_m: 16, height_m: 9, walls: false },
     entities: [
       {
         id: 'spring_1', kind: 'spring', position_m: [0, 3],
@@ -73,6 +74,7 @@ console.log('\nENERGY  a scene with nothing dissipative must conserve it')
     name: 'conservative',
     gravity_ms2: 9.81,
     ground: false,
+    arena: { width_m: 16, height_m: 9, walls: false },
     entities: [
       {
         id: 'pendulum_1', kind: 'pendulum', position_m: [0, 4],
@@ -176,6 +178,32 @@ console.log('\nDETERMINISM  a composed scene must replay exactly')
   c.stepMany(700)
   c.stepMany(800)
   ok('batched stepping matches single stepping', JSON.stringify(c.states()) === JSON.stringify(a.states()))
+}
+
+// ---------------------------------------------------------------------------
+console.log('\nROLLBACK  a snapshot is a scene plus a step count, and must replay exactly')
+{
+  // This is what makes the undo buffer cheap: nothing about the bodies is
+  // stored, so restoring has to reproduce the state by replaying alone.
+  const scene = loadPreset('chain_reaction')
+  const live = new SandboxWorld(structuredClone(scene))
+  live.stepMany(880)
+  const atSnapshot = JSON.stringify(live.states())
+
+  // Keep running past the snapshot, as a real session would.
+  live.stepMany(400)
+
+  const restored = new SandboxWorld(structuredClone(scene))
+  restored.stepMany(880)
+  ok('restored scene matches the snapshot exactly', JSON.stringify(restored.states()) === atSnapshot)
+
+  // And an edited scene must NOT match — otherwise the check above is vacuous.
+  const edited = structuredClone(scene)
+  const box = edited.entities.find((e) => e.id === 'box_1')
+  if (box && box.kind === 'box') box.mass_kg = 5
+  const other = new SandboxWorld(edited)
+  other.stepMany(880)
+  ok('an edited scene diverges, so the check is meaningful', JSON.stringify(other.states()) !== atSnapshot)
 }
 
 console.log(failures === 0 ? '\nAll sandbox checks passed.\n' : `\n${failures} check(s) failed.\n`)

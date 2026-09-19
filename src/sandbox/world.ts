@@ -24,7 +24,7 @@ import {
   DEG,
   RAD,
 } from '../sim/units.ts'
-import { isStaticKind, type Entity, type SandboxScene } from './types.ts'
+import { DEFAULT_ARENA, isStaticKind, type Entity, type SandboxScene } from './types.ts'
 
 const { Engine, Composite, Bodies, Body } = Matter
 
@@ -65,8 +65,23 @@ export class SandboxWorld {
   private accumulatorMs = 0
   steps = 0
 
+  /**
+   * Physics substeps per fixed step.
+   *
+   * A stiff spring is the one thing here that can outrun a 120 Hz step: k = 400
+   * N/m on 0.1 kg gives omega = 63 rad/s, so omega*dt = 0.53 and the explicit
+   * force integration pumps energy instead of conserving it — that scene hit
+   * 82 m/s from a 0.9 m stretch. Substepping brings omega*dt back under 0.2.
+   *
+   * Derived purely from the scene, so determinism is unaffected.
+   */
+  readonly subSteps: number
+
   constructor(scene: SandboxScene) {
-    this.scene = scene
+    // Fill in an arena rather than throwing: a hand-written or older scene JSON
+    // should still load.
+    this.scene = { ...scene, arena: scene.arena ?? { ...DEFAULT_ARENA } }
+    this.subSteps = SandboxWorld.requiredSubSteps(scene)
     this.engine = Engine.create()
     this.engine.gravity.scale = 1
     this.engine.gravity.x = 0
@@ -81,15 +96,36 @@ export class SandboxWorld {
 
   private build(): void {
     const world = this.engine.world
+    const { width_m: W, height_m: H, walls } = this.scene.arena
+    const halfW = mToPx(W / 2)
 
     if (this.scene.ground) {
-      const ground = Bodies.rectangle(0, GROUND_THICKNESS_PX / 2, mToPx(60), GROUND_THICKNESS_PX, {
-        isStatic: true,
-        friction: 0.4,
-        restitution: 0.2,
-        label: 'ground',
-      })
+      // Spans the arena exactly, with a margin so nothing can round off its end.
+      const ground = Bodies.rectangle(
+        0,
+        GROUND_THICKNESS_PX / 2,
+        mToPx(W) + GROUND_THICKNESS_PX * 2,
+        GROUND_THICKNESS_PX,
+        { isStatic: true, friction: 0.4, restitution: 0.2, label: 'ground' },
+      )
       Composite.add(world, ground)
+    }
+
+    if (walls) {
+      const t = GROUND_THICKNESS_PX
+      const h = mToPx(H)
+      const mk = (x: number, y: number, w: number, hh: number, label: string): Matter.Body =>
+        Bodies.rectangle(x, y, w, hh, {
+          isStatic: true,
+          friction: 0.2,
+          restitution: 0.4,
+          label,
+        })
+      Composite.add(world, [
+        mk(-halfW - t / 2, -h / 2, t, h + t * 2, 'wall_left'),
+        mk(halfW + t / 2, -h / 2, t, h + t * 2, 'wall_right'),
+        mk(0, -h - t / 2, mToPx(W) + t * 2, t, 'wall_top'),
+      ])
     }
 
     for (const e of this.scene.entities) {
@@ -105,6 +141,17 @@ export class SandboxWorld {
   }
 
   /** Scene metres (y up) to Matter pixels (y down). */
+  private static requiredSubSteps(scene: SandboxScene): number {
+    let worst = 0
+    for (const e of scene.entities) {
+      if (e.kind !== 'spring') continue
+      worst = Math.max(worst, Math.sqrt(e.stiffness_n_per_m / Math.max(e.mass_kg, 1e-6)))
+    }
+    if (worst === 0) return 1
+    // Target omega * dt_sub <= 0.2.
+    return Math.min(16, Math.max(1, Math.ceil((worst * FIXED_DT_S) / 0.2)))
+  }
+
   private px(p: [number, number]): { x: number; y: number } {
     return { x: mToPx(p[0]), y: -mToPx(p[1]) }
   }
@@ -257,7 +304,7 @@ export class SandboxWorld {
     }
   }
 
-  private applyMagneticRotation(): void {
+  private applyMagneticRotation(dtS: number): void {
     const regions = this.built.filter((b) => b.entity.kind === 'magnet_region' && b.region)
     if (regions.length === 0) return
 
@@ -279,7 +326,7 @@ export class SandboxWorld {
         // Rotate the velocity rather than applying qv x B as a force: an
         // explicit force is Euler on a rotation and gains energy without bound.
         const omegaC = (e.charge_c * field) / b.main.mass
-        const phi = -omegaC * FIXED_DT_S
+        const phi = -omegaC * dtS
         const cos = Math.cos(phi)
         const sin = Math.sin(phi)
 
@@ -329,7 +376,7 @@ export class SandboxWorld {
     }
   }
 
-  private stepPendulums(): void {
+  private stepPendulums(dtS: number): void {
     for (const b of this.built) {
       if (b.entity.kind !== 'pendulum' || !b.main || !b.anchor) continue
       if (b.theta === undefined || b.omega === undefined) continue
@@ -348,8 +395,8 @@ export class SandboxWorld {
       b.omega = vt_ms / L_m
 
       // Symplectic step.
-      b.omega += -(this.scene.gravity_ms2 / L_m) * Math.sin(b.theta) * FIXED_DT_S
-      b.theta += b.omega * FIXED_DT_S
+      b.omega += -(this.scene.gravity_ms2 / L_m) * Math.sin(b.theta) * dtS
+      b.theta += b.omega * dtS
 
       const nx = Math.sin(b.theta)
       const ny = Math.cos(b.theta)
@@ -367,22 +414,71 @@ export class SandboxWorld {
   }
 
   step(forces: { bodyId: string; force_n: [number, number] }[] = []): void {
-    for (const f of forces) {
-      const body = this.bodyById(f.bodyId)
-      if (!body || body.isStatic) continue
-      Body.applyForce(body, body.position, {
-        x: f.force_n[0] * FORCE_N_TO_MATTER,
-        y: -f.force_n[1] * FORCE_N_TO_MATTER,
-      })
+    const n = this.subSteps
+    const dtMs = FIXED_DT_MS / n
+    const dtS = FIXED_DT_S / n
+
+    for (let i = 0; i < n; i++) {
+      for (const f of forces) {
+        const body = this.bodyById(f.bodyId)
+        if (!body || body.isStatic) continue
+        Body.applyForce(body, body.position, {
+          x: f.force_n[0] * FORCE_N_TO_MATTER,
+          y: -f.force_n[1] * FORCE_N_TO_MATTER,
+        })
+      }
+
+      this.applySpringForces()
+      this.applyMagneticRotation(dtS)
+      this.cancelGravityOnBobs()
+      Engine.update(this.engine, dtMs)
+      this.stepPendulums(dtS)
     }
 
-    this.applySpringForces()
-    this.applyMagneticRotation()
-    this.cancelGravityOnBobs()
-    Engine.update(this.engine, FIXED_DT_MS)
-    this.stepPendulums()
+    this.enforceEscapeNet()
     this.steps += 1
   }
+
+  /**
+   * Catch anything that has left the world.
+   *
+   * Even with walls a body can escape — walls can be switched off, and a fast
+   * enough body can tunnel. Once outside, it accelerates forever, poisons the
+   * energy readout, and drags the camera off with it. Rather than integrate
+   * something nobody can see, park it at the boundary and record that it left.
+   */
+  private enforceEscapeNet(): void {
+    const limitX = mToPx(this.scene.arena.width_m * 1.5)
+    const limitY = mToPx(this.scene.arena.height_m * 3)
+
+    for (const b of this.built) {
+      if (!b.main || b.main.isStatic) continue
+      const p = b.main.position
+
+      const lost =
+        !Number.isFinite(p.x) ||
+        !Number.isFinite(p.y) ||
+        Math.abs(p.x) > limitX ||
+        p.y > limitY ||
+        p.y < -limitY
+
+      if (!lost) {
+        this.escaped.delete(b.entity.id)
+        continue
+      }
+
+      if (!this.escaped.has(b.entity.id)) this.escaped.add(b.entity.id)
+      Body.setPosition(b.main, {
+        x: Number.isFinite(p.x) ? Math.max(-limitX, Math.min(limitX, p.x)) : 0,
+        y: Number.isFinite(p.y) ? Math.max(-limitY, Math.min(limitY, p.y)) : 0,
+      })
+      Body.setVelocity(b.main, { x: 0, y: 0 })
+      Body.setAngularVelocity(b.main, 0)
+    }
+  }
+
+  /** Ids that have left the arena and been parked. */
+  readonly escaped = new Set<string>()
 
   stepMany(n: number): void {
     for (let i = 0; i < n; i++) this.step()

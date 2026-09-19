@@ -10,8 +10,8 @@
 import { SandboxWorld } from './world.ts'
 import { InvariantTracker, type Invariants } from './invariants.ts'
 import { loadPreset, SANDBOX_PRESETS } from './presets.ts'
-import { FIELDS, HINTS, ICONS, LABELS, makeEntity } from './palette.ts'
-import { ENTITY_KINDS, isStaticKind, type EntityKind, type SandboxScene } from './types.ts'
+import { FIELDS, HINTS, ICONS, LABELS, makeEntity, nextId } from './palette.ts'
+import { ENTITY_KINDS, isStaticKind, type Entity, type EntityKind, type SandboxScene } from './types.ts'
 import { SandboxView } from '../render/sandbox-canvas.ts'
 
 export class SandboxMode {
@@ -27,12 +27,15 @@ export class SandboxMode {
   /** Drag state. Editing when paused, throwing when running. */
   private dragging: { id: string; throwing: boolean } | null = null
   private lastDrag: { x: number; y: number; t: number } | null = null
+  private panning: { x: number; y: number } | null = null
   private dragVelocity: [number, number] = [0, 0]
 
   constructor(
     private canvas: HTMLCanvasElement,
     private aside: HTMLElement,
     private setStatus: (text: string, tone?: 'ok' | 'warn' | 'error') => void,
+    /** Called with a label just before any destructive edit, for the rollback buffer. */
+    private beforeChange: (label: string) => void = () => {},
   ) {
     this.scene = loadPreset('chain_reaction')
     this.world = new SandboxWorld(this.scene)
@@ -46,9 +49,14 @@ export class SandboxMode {
     this.canvas.addEventListener('mousemove', this.onMove)
     window.addEventListener('mouseup', this.onUp)
     this.canvas.addEventListener('mouseleave', this.onLeave)
+    this.canvas.addEventListener('wheel', this.onWheel, { passive: false })
+    this.canvas.addEventListener('contextmenu', this.onContext)
     window.addEventListener('keydown', this.onKey)
+    // Frame the arena on entry, so its walls and extent are visible rather than
+    // off-screen at whatever zoom was left behind.
+    this.view.fit(this.scene.arena)
     this.renderPanel()
-    this.setStatus('sandbox — place components, drag to move, drag while running to throw')
+    this.setStatus('click a component to add · drag to move · wheel zooms · space pauses')
   }
 
   stop(): void {
@@ -56,7 +64,18 @@ export class SandboxMode {
     this.canvas.removeEventListener('mousemove', this.onMove)
     window.removeEventListener('mouseup', this.onUp)
     this.canvas.removeEventListener('mouseleave', this.onLeave)
+    this.canvas.removeEventListener('wheel', this.onWheel)
+    this.canvas.removeEventListener('contextmenu', this.onContext)
     window.removeEventListener('keydown', this.onKey)
+  }
+
+  private onWheel = (e: WheelEvent): void => {
+    e.preventDefault()
+    this.view.zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.1 : 1 / 1.1)
+  }
+
+  private onContext = (e: MouseEvent): void => {
+    e.preventDefault()
   }
 
   /** Rebuild from the authored scene. Every edit goes through here. */
@@ -64,11 +83,82 @@ export class SandboxMode {
     this.world.dispose()
     this.world = new SandboxWorld(this.scene)
     this.tracker.reset()
+    this.reportedEscape = false
   }
 
   reset(): void {
     this.rebuild()
     this.renderPanel()
+  }
+
+  /** Advance exactly one fixed step, for frame-by-frame inspection. */
+  stepOnce(): void {
+    this.world.step()
+  }
+
+  /**
+   * The body the motion graphs should plot: the selection when it can move,
+   * otherwise the first movable component in the scene.
+   */
+  trackedState(): { id: string; t_s: number; position_m: [number, number]; velocity_ms: [number, number] } | null {
+    const states = this.world.states()
+    if (states.length === 0) return null
+    const picked = states.find((s) => s.id === this.selectedId) ?? states[0]!
+    return {
+      id: picked.id,
+      t_s: this.world.time_s,
+      position_m: picked.position_m,
+      velocity_ms: picked.velocity_ms,
+    }
+  }
+
+  /** A copy of the authored scene, for a rollback snapshot. */
+  snapshotScene(): SandboxScene {
+    return structuredClone(this.scene)
+  }
+
+  get steps(): number {
+    return this.world.steps
+  }
+
+  get simTime(): number {
+    return this.world.time_s
+  }
+
+  /**
+   * Put a previous scene back and replay it to where it was.
+   *
+   * Replaying is exact: the world is a pure function of the scene and the step
+   * count. The replay is capped so restoring a long-running scene cannot lock
+   * the page for seconds.
+   */
+  restoreScene(scene: SandboxScene, steps: number): void {
+    this.scene = structuredClone(scene)
+    this.selectedId = null
+    this.armed = null
+    this.rebuild()
+    this.world.stepMany(Math.min(steps, 20_000))
+    this.renderPanel()
+  }
+
+  /** Frame the arena. */
+  fitView(): void {
+    this.view.fit(this.scene.arena)
+  }
+
+  /** Copy the selection, offset so it is visible and immediately selected. */
+  duplicateSelection(): void {
+    const entity = this.scene.entities.find((x) => x.id === this.selectedId)
+    if (!entity) return
+    this.beforeChange(`before duplicating ${entity.id}`)
+    const copy = structuredClone(entity) as Entity
+    copy.id = nextId(entity.kind)
+    copy.position_m = [entity.position_m[0] + 0.4, entity.position_m[1] + 0.4]
+    this.scene.entities.push(copy)
+    this.selectedId = copy.id
+    this.rebuild()
+    this.renderPanel()
+    this.setStatus(`duplicated ${LABELS[entity.kind]}`)
   }
 
   frame(elapsedMs: number, running: boolean): void {
@@ -77,14 +167,26 @@ export class SandboxMode {
     }
     this.view.draw(this.world, this.selectedId, this.armed, this.cursor)
     this.renderInvariants(this.tracker.sample(this.world))
+
+    if (this.world.escaped.size > 0 && !this.reportedEscape) {
+      this.reportedEscape = true
+      this.setStatus(`${[...this.world.escaped].join(', ')} left the arena and was parked`, 'warn')
+    }
   }
+
+  private reportedEscape = false
 
   // --- interaction --------------------------------------------------------
 
   private onDown = (e: MouseEvent): void => {
+    if (e.button === 1 || e.button === 2) {
+      this.panning = { x: e.clientX, y: e.clientY }
+      return
+    }
     const at = this.view.toScene(e.clientX, e.clientY)
 
     if (this.armed) {
+      this.beforeChange(`before placing ${LABELS[this.armed]}`)
       const entity = makeEntity(this.armed, at)
       this.scene.entities.push(entity)
       this.selectedId = entity.id
@@ -112,6 +214,11 @@ export class SandboxMode {
   }
 
   private onMove = (e: MouseEvent): void => {
+    if (this.panning) {
+      this.view.pan(e.clientX - this.panning.x, e.clientY - this.panning.y)
+      this.panning = { x: e.clientX, y: e.clientY }
+      return
+    }
     const at = this.view.toScene(e.clientX, e.clientY)
     this.cursor = at
     if (!this.dragging) return
@@ -133,6 +240,7 @@ export class SandboxMode {
       // Edit the authored position and rebuild, so the change is reproducible.
       const entity = this.scene.entities.find((x) => x.id === this.dragging!.id)
       if (entity) {
+        this.beforeChange(`before moving ${entity.id}`)
         entity.position_m = at
         this.rebuild()
       }
@@ -140,6 +248,7 @@ export class SandboxMode {
   }
 
   private onUp = (): void => {
+    this.panning = null
     if (this.dragging?.throwing) {
       // Release velocity is the measured drag velocity. Same rule the hand uses.
       this.world.setVelocityMs(this.dragging.id, this.dragVelocity)
@@ -161,14 +270,28 @@ export class SandboxMode {
       this.renderPanel()
       return
     }
+    const target = e.target as HTMLElement | null
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT')) return
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+
     if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedId) {
-      const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT')) return
       e.preventDefault()
+      this.beforeChange(`before deleting ${this.selectedId}`)
       this.scene.entities = this.scene.entities.filter((x) => x.id !== this.selectedId)
       this.selectedId = null
       this.rebuild()
       this.renderPanel()
+      return
+    }
+    if (e.key === 'd' || e.key === 'D') {
+      e.preventDefault()
+      this.duplicateSelection()
+      return
+    }
+    if (e.key === 'f' || e.key === 'F') {
+      e.preventDefault()
+      this.fitView()
+      this.setStatus('view fitted to the arena')
     }
   }
 
@@ -188,9 +311,11 @@ export class SandboxMode {
     select.value =
       Object.entries(SANDBOX_PRESETS).find(([, v]) => v.name === this.scene.name)?.[0] ?? 'blank'
     select.addEventListener('change', () => {
+      this.beforeChange('before scene change')
       this.scene = loadPreset(select.value)
       this.selectedId = null
       this.rebuild()
+      this.view.fit(this.scene.arena)
       this.renderPanel()
       this.setStatus(`loaded ${this.scene.name}`)
     })
@@ -198,6 +323,7 @@ export class SandboxMode {
 
     presets.appendChild(
       this.slider('gravity (m/s²)', this.scene.gravity_ms2, 0, 25, 0.1, (v) => {
+        this.beforeChange('before gravity change')
         this.scene.gravity_ms2 = v
         this.rebuild()
       }),
@@ -253,6 +379,7 @@ export class SandboxMode {
         if (typeof value !== 'number') continue
         box.appendChild(
           this.slider(f.label, value, f.min, f.max, f.step, (v) => {
+            this.beforeChange(`before ${entity.id} ${f.label} change`)
             rec[f.key] = v
             this.rebuild()
           }),
@@ -280,6 +407,7 @@ export class SandboxMode {
       del.className = 'sb-delete'
       del.textContent = 'Delete component'
       del.addEventListener('click', () => {
+        this.beforeChange(`before deleting ${entity.id}`)
         this.scene.entities = this.scene.entities.filter((x) => x.id !== entity.id)
         this.selectedId = null
         this.rebuild()

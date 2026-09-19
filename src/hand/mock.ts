@@ -9,7 +9,10 @@
  * Controls:
  *   move          palm position on the sim plane
  *   hold button   push through the plane (palm_z goes negative)
- *   space / shift pinch, to grab and throw
+ *   hold shift    pinch, to grab and throw
+ *
+ * Shift, not space: space is the global play/pause key, and a control that both
+ * pauses the sim and grabs a body is a control nobody can use.
  */
 import type { HandFrame, HandSource, Vec3 } from './types.ts'
 
@@ -83,8 +86,7 @@ export class MockHandSource implements HandSource {
     this.last = null
   }
   private onKey = (e: KeyboardEvent): void => {
-    if (e.code !== 'Space' && e.key !== 'Shift') return
-    e.preventDefault()
+    if (e.key !== 'Shift') return
     this.pinching = e.type === 'keydown'
     if (this.frame) this.frame.pinch = this.pinching ? 1 : 0
   }

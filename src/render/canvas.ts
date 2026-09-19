@@ -59,32 +59,41 @@ export class CanvasView {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   }
 
-  /** Frame the scene: fit all bodies with padding, never zooming past 1:1. */
-  private fit(world: SimWorld): void {
-    const bodies = Matter.Composite.allBodies(world.engine.world)
-    let minX = Infinity
-    let maxX = -Infinity
-    let minY = Infinity
-    let maxY = -Infinity
-
-    for (const b of bodies) {
-      if (b.label === 'ground') continue // the ground slab is 40 m wide; ignore it
-      minX = Math.min(minX, b.bounds.min.x)
-      maxX = Math.max(maxX, b.bounds.max.x)
-      minY = Math.min(minY, b.bounds.min.y)
-      maxY = Math.max(maxY, b.bounds.max.y)
-    }
-    if (!Number.isFinite(minX)) return
-
-    maxY = Math.max(maxY, 0) // always include the ground line
-    const pad = mToPx(0.3)
-    const w = maxX - minX + pad * 2
-    const h = maxY - minY + pad * 2
-
+  /**
+   * Camera.
+   *
+   * Scale comes from the problem's own dimensions and then stays put. Refitting
+   * to live body positions made the scale jitter on every frame and zoom out
+   * without limit when something rolled away. If the focus body leaves the box,
+   * the view PANS to keep it — it never rescales.
+   */
+  private frame(world: SimWorld, state: SimState): void {
+    const v = world.view
     const { clientWidth: cw, clientHeight: ch } = this.canvas
-    this.scale = Math.min(cw / w, ch / h, 1.5)
-    this.originX = cw / 2 - ((minX + maxX) / 2) * this.scale
-    this.originY = ch / 2 - ((minY + maxY) / 2) * this.scale
+    const pad = mToPx(0.25)
+
+    const w = mToPx(v.maxX_m - v.minX_m) + pad * 2
+    const h = mToPx(v.maxY_m - v.minY_m) + pad * 2
+    this.scale = Math.min(cw / w, ch / h)
+
+    // Centre of the framing box, in Matter pixels (y down).
+    let cx = mToPx((v.minX_m + v.maxX_m) / 2)
+    let cy = -mToPx((v.minY_m + v.maxY_m) / 2)
+
+    // Pan, but never rescale, to keep the subject on screen.
+    const focus = world.bodyById(state.focus.id)
+    if (focus) {
+      const margin = Math.min(cw, ch) * 0.12
+      const halfW = (cw / 2 - margin) / this.scale
+      const halfH = (ch / 2 - margin) / this.scale
+      cx = Math.max(cx, focus.position.x - halfW)
+      cx = Math.min(cx, focus.position.x + halfW)
+      cy = Math.max(cy, focus.position.y - halfH)
+      cy = Math.min(cy, focus.position.y + halfH)
+    }
+
+    this.originX = cw / 2 - cx * this.scale
+    this.originY = ch / 2 - cy * this.scale
   }
 
   private sx(x: number): number {
@@ -346,7 +355,7 @@ export class CanvasView {
 
   draw(world: SimWorld, state: SimState, coupling: CouplingState): void {
     this.resize()
-    this.fit(world)
+    this.frame(world, state)
 
     const focusBody = world.bodyById(state.focus.id)
     if (focusBody) {

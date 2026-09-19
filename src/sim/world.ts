@@ -22,7 +22,7 @@ import {
   matterAngVelToRads,
   RAD,
 } from './units.ts'
-import { buildScene, addToWorld, type BuiltScene } from './builders.ts'
+import { buildScene, addToWorld, type BuiltScene, type ViewBox } from './builders.ts'
 import { installCorrections, type Corrections } from './corrections.ts'
 import { toParams, type SimParams } from './params.ts'
 import { solveAsked, type Solution } from './analytic.ts'
@@ -126,6 +126,52 @@ export class SimWorld {
     return this.scene.interactableIds
   }
 
+  /** Stable camera framing for this problem, in metres. */
+  get view(): ViewBox {
+    return this.scene.view
+  }
+
+  /** Bodies that have left the world and been parked. */
+  readonly escaped = new Set<string>()
+
+  /**
+   * Catch anything that leaves the world.
+   *
+   * A projectile that lands keeps rolling; with the old fixed floor it reached
+   * the edge at x = 20 m, fell off, and was 10 km below the scene a minute
+   * later. Parking it at the boundary keeps the readouts, the energy totals and
+   * the camera meaningful instead of tracking something nobody can see.
+   */
+  private enforceEscapeNet(): void {
+    const v = this.scene.view
+    const spanX = Math.max(v.maxX_m - v.minX_m, 1)
+    const spanY = Math.max(v.maxY_m - v.minY_m, 1)
+    const limitX = mToPx(Math.abs(v.minX_m) + spanX * 6)
+    const limitY = mToPx(Math.abs(v.maxY_m) + spanY * 6)
+
+    for (const [id, body] of Object.entries(this.scene.byId)) {
+      if (body.isStatic) continue
+      const p = body.position
+      const lost =
+        !Number.isFinite(p.x) ||
+        !Number.isFinite(p.y) ||
+        Math.abs(p.x) > limitX ||
+        Math.abs(p.y) > limitY
+
+      if (!lost) {
+        this.escaped.delete(id)
+        continue
+      }
+      this.escaped.add(id)
+      Body.setPosition(body, {
+        x: Number.isFinite(p.x) ? Math.max(-limitX, Math.min(limitX, p.x)) : 0,
+        y: Number.isFinite(p.y) ? Math.max(-limitY, Math.min(limitY, p.y)) : 0,
+      })
+      Body.setVelocity(body, { x: 0, y: 0 })
+      Body.setAngularVelocity(body, 0)
+    }
+  }
+
   bodyById(id: string): Matter.Body | undefined {
     return this.scene.byId[id]
   }
@@ -151,6 +197,7 @@ export class SimWorld {
     this.corrections.preStep()
     Engine.update(this.engine, FIXED_DT_MS)
     this.corrections.postStep?.()
+    this.enforceEscapeNet()
     this.steps += 1
   }
 
@@ -221,6 +268,7 @@ export class SimWorld {
 
   /** Rebuild from the original spec. Identical starting state, every time. */
   reset(): void {
+    this.escaped.clear()
     this.corrections.dispose()
     Composite.clear(this.engine.world, false)
     this.scene = buildScene(this.params)

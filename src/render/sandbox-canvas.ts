@@ -30,10 +30,17 @@ const COLORS = {
 
 export class SandboxView {
   private ctx: CanvasRenderingContext2D
-  /** Screen px per sim px. Fixed, not refit per frame — placement needs stability. */
+  /**
+   * Screen px per sim px. Never refit automatically — placement needs a stable
+   * mapping between where you click and where a component lands. Zoom and pan
+   * are user actions only.
+   */
   private scale = 0.55
   private panX = 0
   private panY = 0
+  /** User pan offset in screen px, on top of the default framing. */
+  private offsetX = 0
+  private offsetY = 0
 
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d')
@@ -50,8 +57,41 @@ export class SandboxView {
     }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     // Origin sits low-centre: the ground line, with headroom above it.
-    this.panX = w / 2
-    this.panY = h * 0.82
+    this.panX = w / 2 + this.offsetX
+    this.panY = h * 0.82 + this.offsetY
+  }
+
+  /** Zoom about a screen point, so the thing under the cursor stays put. */
+  zoomAt(clientX: number, clientY: number, factor: number): void {
+    const rect = this.canvas.getBoundingClientRect()
+    const before = this.toScene(clientX, clientY)
+    this.scale = Math.max(0.12, Math.min(3, this.scale * factor))
+    // Recompute the base origin at the new scale, then correct the offset so the
+    // scene point under the cursor is unchanged.
+    this.panX = rect.width / 2 + this.offsetX
+    this.panY = rect.height * 0.82 + this.offsetY
+    const after = this.toScene(clientX, clientY)
+    this.offsetX += (after[0] - before[0]) * mToPx(1) * this.scale
+    this.offsetY -= (after[1] - before[1]) * mToPx(1) * this.scale
+  }
+
+  pan(dx: number, dy: number): void {
+    this.offsetX += dx
+    this.offsetY += dy
+  }
+
+  /** Frame the arena, filling the canvas with a margin. */
+  fit(arena: { width_m: number; height_m: number }): void {
+    const { clientWidth: w, clientHeight: h } = this.canvas
+    if (w === 0 || h === 0) return
+    const margin = 0.88
+    this.scale = Math.min(
+      (w * margin) / mToPx(arena.width_m),
+      (h * margin) / mToPx(arena.height_m),
+    )
+    this.offsetX = 0
+    // Centre the arena vertically rather than sitting it on the 82% line.
+    this.offsetY = h * 0.5 - h * 0.82 + (mToPx(arena.height_m) * this.scale) / 2
   }
 
   private sx(x: number): number {
@@ -119,6 +159,18 @@ export class SandboxView {
     ctx.fillStyle = COLORS.bg
     ctx.fillRect(0, 0, this.canvas.clientWidth, this.canvas.clientHeight)
     this.grid()
+
+    // The arena outline: where components can live, and where the walls are.
+    const arena = world.scene.arena
+    const ax = this.sx(-mToPx(arena.width_m / 2))
+    const ay = this.sy(-mToPx(arena.height_m))
+    const aw = mToPx(arena.width_m) * this.scale
+    const ah = mToPx(arena.height_m) * this.scale
+    ctx.strokeStyle = arena.walls ? COLORS.static : COLORS.grid
+    ctx.lineWidth = arena.walls ? 2 : 1
+    if (!arena.walls) ctx.setLineDash([5, 5])
+    ctx.strokeRect(ax, ay, aw, ah)
+    ctx.setLineDash([])
 
     // Field regions first, so bodies draw on top of them.
     for (const c of world.components) {

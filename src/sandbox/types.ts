@@ -113,11 +113,29 @@ export type Entity =
 /** Kinds that never move and can never be pushed by the hand. */
 export const STATIC_ENTITY_KINDS: readonly EntityKind[] = ['ramp', 'wall', 'magnet_region']
 
+/**
+ * The playable area.
+ *
+ * Without one, bodies leave and never come back: a frictionless box slid off the
+ * end of the old fixed-width floor at x = 30 m, fell forever, and was doing
+ * 74 m/s by the time anyone noticed. An arena gives the floor a definite size,
+ * optionally walls it in, and gives the escape net something to measure against.
+ */
+export interface Arena {
+  width_m: number
+  height_m: number
+  /** Solid left/right/top boundary. Off for open scenes like orbits. */
+  walls: boolean
+}
+
+export const DEFAULT_ARENA: Arena = { width_m: 14, height_m: 5, walls: true }
+
 export interface SandboxScene {
   name: string
   gravity_ms2: number
-  /** Whether a floor spans the scene. Turn it off for orbit-style setups. */
+  /** Whether a floor spans the arena. Turn it off for orbit-style setups. */
   ground: boolean
+  arena: Arena
   entities: Entity[]
 }
 

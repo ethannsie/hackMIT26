@@ -7,6 +7,9 @@ Two modes. **Problem mode** solves a specific problem and shows its derivation.
 solver and the determinism guarantees; they differ in what the side panel can
 honestly claim, which is the whole design tension — see [Sandbox mode](#sandbox-mode).
 
+Both modes share the transport controls, the motion graphs, and the rollback
+buffer — see [Using it](#using-it).
+
 Everything in the accuracy column is measured by `npm run verify`, which runs
 the engine against independent closed-form solutions. It is not an estimate.
 
@@ -30,6 +33,98 @@ Three ways in, all producing the same `ProblemSpec`:
 2. **Pick a type and drag sliders.** No model, no network, no API key. This is a
    complete demo on its own.
 3. **Hand-written spec.** Any `ProblemSpec` JSON drives the sim directly.
+
+---
+
+## Using it
+
+### Controls
+
+| | |
+|---|---|
+| **Space** | play / pause |
+| **.** | advance exactly one fixed step (pauses first) |
+| **R** | reset |
+| **G** | motion graphs |
+| **Ctrl/⌘ Z** | roll back |
+| **?** | shortcuts |
+| **Esc** | close / deselect |
+| Speed | 0.25× / 0.5× / 1× / 2× — scales elapsed time fed to the solver, never the timestep |
+
+Problem mode: drag to push a body, hold **Shift** to grab and release to throw.
+Sandbox mode: click to place or select, drag to move (paused) or throw
+(running), wheel to zoom, middle/right-drag to pan, **D** duplicate, **F** fit,
+**Del** delete.
+
+### Motion graphs
+
+Press **G** for position, velocity and acceleration against time, for whichever
+body is in focus (the problem's subject, or the sandbox selection).
+
+Three separate charts on a shared time axis — never one chart with two y-scales,
+since the three quantities have different units and magnitudes. Hovering draws a
+crosshair across all three, so the same instant can be read on each: the moment
+velocity peaks is the moment acceleration crosses zero, visible directly.
+
+Series are direct-labelled (`x`, `y`, `vx`, `vy`, `|v|`, `ax`, `ay`) rather than
+identified by colour alone, and the palette is validated for colour-vision
+deficiency on all pairs against the dark surface.
+
+**Acceleration is differenced from velocity, not read from the solver.** During a
+collision Matter's internal force is a penetration-resolution artefact rather
+than the physical force; plotting it produces a spike that means nothing.
+Differencing gives the acceleration a student would actually measure.
+
+### Rollback
+
+Reset and edits are destructive. The last 24 states are kept in memory, and
+**Ctrl/⌘ Z** — or the History dropdown — steps back to any of them, restoring
+the graphs along with the scene.
+
+Snapshots are tiny, because the sim is deterministic: a run is fully described
+by its spec (or scene) plus a step count, so restoring means rebuilding and
+replaying that many fixed steps, landing on exactly the same state. Nothing
+about the bodies is stored. `verify:sandbox` checks that replay equivalence
+directly, and checks that an edited scene diverges — so the check is not vacuous.
+
+Repeated edits from one gesture (dragging a slider) coalesce into a single undo
+step. The buffer is memory-only and does not survive a reload; it is an undo
+buffer, not a save file.
+
+### Staying inside the world
+
+Bodies used to leave and never come back. A frictionless box slid off the end of
+the floor at x = 30 m, fell forever, and was doing 74 m/s by the time anything
+noticed — which also poisoned the energy readout and dragged the camera with it.
+Three things now prevent that:
+
+- **Sized floors.** A projectile's floor is scaled to its computed range, so a
+  landed body cannot roll off the end.
+- **Sandbox arenas.** Each scene declares a width, height and whether the
+  boundary is solid. The arena is drawn, so its extent is never a guess.
+- **An escape net.** Anything that still leaves — walls switched off, a tunnelling
+  body, a non-finite coordinate — is parked at the boundary, and the status bar
+  names it. Nothing integrates off-screen forever.
+
+Measured effect on the worst stress cases:
+
+| Case | Before | After |
+|---|---|---|
+| Heavy box, frictionless 3 m ramp | 74.3 m/s, 288 m away | 6.0 m/s — the theoretical √(2gL sinθ) |
+| Small fast ball | 87.7 m/s, 398 m away | 9.1 m/s, stays in the arena |
+| Projectile, 90 s run | fell to −10.7 km | never leaves the floor |
+| Stiff spring, k = 400 on 0.1 kg | 82 m/s, energy growing | 57 m/s — the correct ½kx² result |
+
+The camera helps too: scale comes from the problem's own dimensions and then
+stays fixed. It pans to follow a body that leaves the frame but never rescales,
+so there is no zoom jitter and no runaway zoom-out.
+
+### Stiff springs
+
+A spring can outrun a 120 Hz step: k = 400 N/m on 0.1 kg gives ω = 63 rad/s, so
+ω·dt = 0.53 and explicit integration pumps energy rather than conserving it. The
+sandbox derives a substep count from the stiffest spring in the scene, bringing
+ω·dt under 0.2. It is derived from the scene alone, so determinism is unaffected.
 
 ---
 
@@ -232,7 +327,7 @@ ships today; MediaPipe drops into the same interface without the sim changing.
 
 ## Accuracy and determinism
 
-**39 checks, all passing.** Worst case across the entire library is 0.58%.
+**41 checks, all passing.** Worst case across the entire library is 0.58%.
 
 The sim is deterministic: physics only advances through a fixed 8.333 ms step
 and never reads a frame delta. Verified two ways — two worlds from the same spec
@@ -249,6 +344,7 @@ Four places where the stock engine was measurably wrong, and what replaced it:
 | Collision, e → 1 | 0.375 / 1.625 instead of 0 / 2 | closed-form impulse | exact |
 | Magnetic orbit | explicit Euler on a rotation: speed +2175%, orbit 23× | Boris-style velocity rotation | 0.000% drift |
 | Uniform circular | constraint solver leaks 38% of speed per orbit | radius and tangent re-imposed each step | 0.00% |
+| Pendulum rod | 40° decays to 18° in 30 s, undamped | 1-DOF symplectic integration | holds 40.00° |
 
 Matter still handles all geometry, contact detection and every hand-driven
 interaction. These four are cases where its approximations would have put wrong
@@ -294,6 +390,7 @@ the student's, the system says so.
   the ramp angle is slider-driven today.
 - The renderer is 2D canvas. The three.js scene with the articulated hand is
   the tracking side's surface and is not in this half yet.
+- Motion graphs plot one body at a time.
 - Rotating-frame accuracy is verified over 400 steps. The centrifugal term grows
   with radius, so very long runs will drift — physically correct, but the
   comparison against a closed form stops being meaningful once the particle is
@@ -321,6 +418,10 @@ hits a pendulum, which knocks a ball into a wall.
 | **Spring** | stiffness k (N/m), mass, rest length, start stretch, bob radius | Real k, so T = 2π√(m/k) actually holds |
 | **Magnetic field** | width, height, B (signed) | A region; charged bodies inside curve, speed never changes |
 
+Each scene also carries an **arena** — width, height, and whether the boundary is
+solid — plus gravity and whether there is a floor. The arena is drawn, so what is
+in play is visible rather than implied.
+
 ### Editing
 
 | Action | Effect |
@@ -329,8 +430,15 @@ hits a pendulum, which knocks a ball into a wall.
 | Click a component | select and open its inspector |
 | Drag while paused | move its authored position |
 | Drag while running | grab it; release throws at the drag velocity |
+| Wheel | zoom about the cursor |
+| Middle / right drag | pan |
+| D | duplicate the selection |
+| F | fit the view to the arena |
 | Delete / Backspace | remove the selection |
 | Esc | cancel placement or deselect |
+
+Every edit is snapshotted first, so **Ctrl/⌘ Z** undoes placing, moving,
+deleting, duplicating, a slider change, or a scene swap.
 
 **The scene spec is the authored initial state, and the world is rebuilt from it
 on every edit.** Nothing mutates a running simulation. So any scene replays
@@ -372,7 +480,7 @@ of its swing** read as a comfortable "7%".
 
 ### Sandbox accuracy
 
-`npm run verify:sandbox` — 14 checks, all passing.
+`npm run verify:sandbox` — 16 checks, all passing.
 
 | Check | Result |
 |---|---|
@@ -384,6 +492,8 @@ of its swing** read as a comfortable "7%".
 | Charged ball deflects | y 1.60 → 2.21 m |
 | Field does no work on the charged ball | 0.00% speed change |
 | Composed scene replays bit-identically | holds |
+| A rollback snapshot replays to the same state | holds |
+| An edited scene diverges (so the check is real) | holds |
 
 ### Limits
 
@@ -397,6 +507,7 @@ of its swing** read as a comfortable "7%".
   not a place to be given an answer.
 - Hand tracking is not wired into sandbox yet. The coupling is already
   generalised to accept either world, so it is a small change when needed.
+- Scenes cannot be saved to disk. Rollback is memory-only and ends with the tab.
 
 ---
 

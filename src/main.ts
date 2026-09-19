@@ -1,20 +1,24 @@
 /**
- * App wiring: spec -> sim -> render -> derivation, with a hand source in the loop.
+ * App shell: mode switching, transport controls, motion graphs, keyboard.
  *
- * The render loop never steps physics by a frame delta. It hands elapsed
- * wall-clock time to SimWorld.advance(), which converts it into whole fixed
- * steps. The hand is sampled once per fixed step so interaction is reproducible
- * at any frame rate.
+ * The render loop never steps physics by a frame delta. Elapsed wall-clock time
+ * goes to `advanceWith`, which converts it into whole fixed steps, so a slow
+ * frame produces the same trajectory as a fast one. The speed control scales the
+ * elapsed time fed in, never the timestep itself.
  */
 import 'katex/dist/katex.min.css'
 import { SimWorld } from './sim/world.ts'
 import { CanvasView } from './render/canvas.ts'
 import { renderDerivation } from './render/derivation.ts'
+import { MotionCharts, MotionRecorder } from './render/charts.ts'
 import { HandCoupling, type CouplingState } from './hand/coupling.ts'
 import { MockHandSource } from './hand/mock.ts'
 import { extractFromImage } from './extract/client.ts'
 import { PRESETS, KNOBS } from './presets.ts'
 import { SandboxMode } from './sandbox/ui.ts'
+import { History } from './history.ts'
+import type { Sample } from './render/charts.ts'
+import type { SandboxScene } from './sandbox/types.ts'
 import { CONFIDENCE_FLOOR, PROBLEM_TYPES, type ProblemSpec, type ProblemType } from './spec/types.ts'
 
 const $ = <T extends HTMLElement>(sel: string): T => {
@@ -32,37 +36,111 @@ const fileEl = $<HTMLInputElement>('#photo')
 const sandboxAside = $<HTMLDivElement>('#sandbox-panel')
 const problemAside = $<HTMLDivElement>('#problem-panel')
 const modeEl = $<HTMLSelectElement>('#mode')
-
-const view = new CanvasView(canvas)
-const coupling = new HandCoupling()
-
-let spec: ProblemSpec = PRESETS.inclined_plane
-let world = new SimWorld(spec)
-let repairs: string[] = []
-let running = true
+const speedEl = $<HTMLSelectElement>('#speed')
+const playBtn = $<HTMLButtonElement>('#play')
+const stepBtn = $<HTMLButtonElement>('#step')
+const graphsBtn = $<HTMLButtonElement>('#graphs')
+const drawer = $<HTMLElement>('#charts-drawer')
+const chartCanvas = $<HTMLCanvasElement>('#charts')
+const chartTarget = $<HTMLSpanElement>('#chart-target')
+const helpEl = $<HTMLDivElement>('#help')
+const undoBtn = $<HTMLButtonElement>('#undo')
+const historyEl = $<HTMLSelectElement>('#history')
 
 function setStatus(text: string, tone: 'ok' | 'warn' | 'error' = 'ok'): void {
   statusEl.textContent = text
   statusEl.dataset['tone'] = tone
 }
 
-const sandbox = new SandboxMode(canvas, sandboxAside, setStatus)
+const view = new CanvasView(canvas)
+const coupling = new HandCoupling()
+const recorder = new MotionRecorder()
+const charts = new MotionCharts(chartCanvas)
+// Sandbox asks us to snapshot before it changes anything, so placing, deleting
+// and slider edits are all undoable through the same buffer.
+const sandbox = new SandboxMode(canvas, sandboxAside, setStatus, (label) => remember(label))
+
 type Mode = 'problem' | 'sandbox'
 let mode: Mode = 'problem'
+let spec: ProblemSpec = PRESETS.inclined_plane
+let world = new SimWorld(spec)
+let repairs: string[] = []
+let running = true
+let showGraphs = false
+let speed = 1
+
+/**
+ * Rollback buffer.
+ *
+ * Snapshots are cheap because the sim is deterministic: the spec (or scene) plus
+ * a step count reproduces the run exactly, so nothing about the bodies is
+ * stored. The recorded motion goes along for the ride so the graphs show the
+ * restored run too.
+ */
+type Snap =
+  | { kind: 'problem'; spec: ProblemSpec; repairs: string[]; steps: number; samples: Sample[]; tracked: string | null }
+  | { kind: 'sandbox'; scene: SandboxScene; steps: number; samples: Sample[]; tracked: string | null }
+
+const rollback = new History<Snap>()
+
+/** Capture the state as it is right now, before something destroys it. */
+function remember(label: string): void {
+  const samples = recorder.snapshot()
+  const tracked = recorder.tracked
+  if (mode === 'sandbox') {
+    rollback.push(label, { kind: 'sandbox', scene: sandbox.snapshotScene(), steps: sandbox.steps, samples, tracked }, sandbox.simTime)
+  } else {
+    rollback.push(label, { kind: 'problem', spec, repairs: [...repairs], steps: world.steps, samples, tracked }, world.time_s)
+  }
+  refreshHistoryUi()
+}
+
+function restore(snap: Snap): void {
+  if (snap.kind === 'sandbox') {
+    if (mode !== 'sandbox') setMode('sandbox')
+    sandbox.restoreScene(snap.scene, snap.steps)
+  } else {
+    if (mode !== 'problem') setMode('problem')
+    world.dispose()
+    spec = snap.spec
+    repairs = [...snap.repairs]
+    world = new SimWorld(spec)
+    // Deterministic replay: the same spec and step count is the same state.
+    world.stepMany(Math.min(snap.steps, 20_000))
+    typeEl.value = spec.problem_type
+    buildKnobs()
+    refreshDerivation()
+  }
+  recorder.restore(snap.samples, snap.tracked)
+  setRunning(false)
+  refreshHistoryUi()
+}
+
+function refreshHistoryUi(): void {
+  const entries = rollback.list()
+  undoBtn.disabled = entries.length === 0
+  historyEl.disabled = entries.length === 0
+  historyEl.innerHTML =
+    `<option value="">History (${entries.length})</option>` +
+    entries
+      .map((e) => `<option value="${e.id}">${e.label} · t=${e.sim_time_s.toFixed(1)}s</option>`)
+      .join('')
+  historyEl.value = ''
+}
 
 const hand = new MockHandSource({
   element: canvas,
-  // Kept in step with the view so a mouse metre and a sim metre agree.
   metresPerPixel: 1 / view.pixelsPerMetre,
 })
-void hand.start()
 
-/** Swap in a new spec: rebuild the world, the sliders and the derivation. */
+// --- problem mode ----------------------------------------------------------
+
 function load(next: ProblemSpec, nextRepairs: string[] = []): void {
   world.dispose()
   spec = next
   repairs = nextRepairs
   world = new SimWorld(spec)
+  recorder.clear(null)
   typeEl.value = spec.problem_type
   buildKnobs()
   refreshDerivation()
@@ -72,7 +150,6 @@ function refreshDerivation(): void {
   renderDerivation(panel, world.state().solutions, spec.raw_text, repairs)
 }
 
-/** Live parameter editing. Every change rebuilds the sim from the edited spec. */
 function buildKnobs(): void {
   knobsEl.innerHTML = ''
   for (const knob of KNOBS[spec.problem_type]) {
@@ -93,6 +170,8 @@ function buildKnobs(): void {
     const out = row.querySelector('output')!
     input.addEventListener('input', () => {
       const v = Number(input.value)
+      // Coalesced inside History, so a whole drag is one undo step.
+      remember(`before ${knob.label} change`)
       out.textContent = String(v)
       // Rebuild rather than mutate: the sim is a pure function of the spec, and
       // keeping it that way is what makes a run reproducible.
@@ -100,6 +179,7 @@ function buildKnobs(): void {
       world.dispose()
       spec = edited
       world = new SimWorld(spec)
+      recorder.clear(null)
       refreshDerivation()
     })
 
@@ -108,31 +188,55 @@ function buildKnobs(): void {
   }
 }
 
-// --- controls --------------------------------------------------------------
-typeEl.innerHTML = PROBLEM_TYPES.map(
-  (t) => `<option value="${t}">${t.replace(/_/g, ' ')}</option>`,
-).join('')
-typeEl.addEventListener('change', () => {
-  load(PRESETS[typeEl.value as ProblemType])
-  setStatus(`loaded preset: ${typeEl.value.replace(/_/g, ' ')}`)
-})
+// --- transport -------------------------------------------------------------
 
-modeEl.addEventListener('change', () => {
-  setMode(modeEl.value as Mode)
-})
+function setRunning(next: boolean): void {
+  running = next
+  playBtn.textContent = running ? '❚❚' : '▶'
+  playBtn.title = running ? 'Pause (Space)' : 'Play (Space)'
+  stepBtn.disabled = running
+}
+
+function stepOnce(): void {
+  if (mode === 'sandbox') sandbox.stepOnce()
+  else {
+    world.step(lastCoupling.force ? [lastCoupling.force] : [])
+    sampleMotion()
+  }
+}
+
+function resetAll(): void {
+  remember('before reset')
+  if (mode === 'sandbox') {
+    sandbox.reset()
+    setStatus('sandbox reset to the authored scene')
+  } else {
+    world.reset()
+    recorder.clear(null)
+    setStatus('reset')
+  }
+}
+
+function setGraphs(next: boolean): void {
+  showGraphs = next
+  drawer.hidden = !showGraphs
+  graphsBtn.classList.toggle('on', showGraphs)
+}
 
 function setMode(next: Mode): void {
   mode = next
   modeEl.value = next
-  // Keep the URL in step, so a demo can be opened straight into either mode.
-  const hash = next === 'sandbox' ? '#sandbox' : ''
-  if (window.location.hash !== hash) history.replaceState(null, '', hash || window.location.pathname)
   const inSandbox = mode === 'sandbox'
   problemAside.hidden = inSandbox
   sandboxAside.hidden = !inSandbox
-  // The problem-mode controls make no sense over a composed scene.
   typeEl.hidden = inSandbox
-  fileEl.hidden = inSandbox
+  fileEl.parentElement!.hidden = inSandbox
+  recorder.clear(null)
+
+  const hash = inSandbox ? '#sandbox' : ''
+  if (window.location.hash !== hash) {
+    window.history.replaceState(null, '', hash || window.location.pathname)
+  }
 
   if (inSandbox) {
     hand.stop()
@@ -140,23 +244,79 @@ function setMode(next: Mode): void {
   } else {
     sandbox.stop()
     void hand.start()
-    setStatus('problem mode — drag on the canvas to push, hold space to grab and throw')
+    setStatus('drag to push · hold shift to grab and throw · space pauses')
   }
 }
 
-$('#reset').addEventListener('click', () => {
+// --- graphs ----------------------------------------------------------------
+
+function sampleMotion(): void {
   if (mode === 'sandbox') {
-    sandbox.reset()
-    setStatus('sandbox reset to the authored scene')
-  } else {
-    world.reset()
-    setStatus('reset')
+    const s = sandbox.trackedState()
+    if (s) recorder.push(s.id, s.t_s, s.position_m, s.velocity_ms)
+    else recorder.clear(null)
+    return
+  }
+  const st = world.state()
+  recorder.push(st.focus.id, st.time_s, st.focus.position_m, st.focus.velocity_ms)
+}
+
+chartCanvas.addEventListener('mousemove', (e) => {
+  const rect = chartCanvas.getBoundingClientRect()
+  charts.hoverX = e.clientX - rect.left
+})
+chartCanvas.addEventListener('mouseleave', () => {
+  charts.hoverX = null
+})
+
+// --- controls --------------------------------------------------------------
+
+typeEl.innerHTML = PROBLEM_TYPES.map(
+  (t) => `<option value="${t}">${t.replace(/_/g, ' ')}</option>`,
+).join('')
+typeEl.addEventListener('change', () => {
+  remember('before problem change')
+  load(PRESETS[typeEl.value as ProblemType])
+  setStatus(`loaded ${typeEl.value.replace(/_/g, ' ')}`)
+})
+
+modeEl.addEventListener('change', () => setMode(modeEl.value as Mode))
+speedEl.addEventListener('change', () => {
+  speed = Number(speedEl.value)
+})
+playBtn.addEventListener('click', () => setRunning(!running))
+undoBtn.addEventListener('click', undoOnce)
+historyEl.addEventListener('change', () => {
+  const id = Number(historyEl.value)
+  if (!id) return
+  const snap = rollback.take(id)
+  if (snap) {
+    restore(snap.payload)
+    setStatus(`rolled back to "${snap.label}" at t = ${snap.sim_time_s.toFixed(1)} s`)
   }
 })
-const playBtn = $<HTMLButtonElement>('#play')
-playBtn.addEventListener('click', () => {
-  running = !running
-  playBtn.textContent = running ? 'Pause' : 'Play'
+
+function undoOnce(): void {
+  const snap = rollback.pop()
+  if (!snap) {
+    setStatus('nothing to roll back to', 'warn')
+    return
+  }
+  restore(snap.payload)
+  setStatus(`rolled back: ${snap.label} (t = ${snap.sim_time_s.toFixed(1)} s)`)
+}
+stepBtn.addEventListener('click', stepOnce)
+$('#reset').addEventListener('click', resetAll)
+graphsBtn.addEventListener('click', () => setGraphs(!showGraphs))
+$('#charts-close').addEventListener('click', () => setGraphs(false))
+$('#help-open').addEventListener('click', () => {
+  helpEl.hidden = false
+})
+$('#help-close').addEventListener('click', () => {
+  helpEl.hidden = true
+})
+helpEl.addEventListener('click', (e) => {
+  if (e.target === helpEl) helpEl.hidden = true
 })
 
 fileEl.addEventListener('change', async () => {
@@ -176,12 +336,12 @@ fileEl.addEventListener('change', async () => {
 
     if (result.needsConfirmation) {
       setStatus(
-        `low confidence (${result.spec.confidence.toFixed(2)} < ${CONFIDENCE_FLOOR}) — confirm the problem type above. ${shrink}, ${result.elapsed_ms} ms via ${result.source}`,
+        `low confidence (${result.spec.confidence.toFixed(2)} < ${CONFIDENCE_FLOOR}) — confirm the type. ${shrink}, ${result.elapsed_ms} ms via ${result.source}`,
         'warn',
       )
     } else {
       setStatus(
-        `${result.spec.problem_type.replace(/_/g, ' ')} at ${result.spec.confidence.toFixed(2)} confidence · ${shrink} · ${result.elapsed_ms} ms via ${result.source}`,
+        `${result.spec.problem_type.replace(/_/g, ' ')} · confidence ${result.spec.confidence.toFixed(2)} · ${shrink} · ${result.elapsed_ms} ms via ${result.source}`,
       )
     }
   } catch (err) {
@@ -191,7 +351,63 @@ fileEl.addEventListener('change', async () => {
   }
 })
 
+// --- keyboard --------------------------------------------------------------
+
+function typingInAField(e: KeyboardEvent): boolean {
+  const t = e.target as HTMLElement | null
+  return !!t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')
+}
+
+window.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
+    e.preventDefault()
+    undoOnce()
+    return
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+
+  if (e.key === 'Escape') {
+    if (!helpEl.hidden) {
+      helpEl.hidden = true
+      e.preventDefault()
+    }
+    return
+  }
+  if (typingInAField(e)) return
+
+  switch (e.key) {
+    case ' ':
+      // Space pauses. Grab moved to Shift so the two never fight.
+      e.preventDefault()
+      setRunning(!running)
+      break
+    case '.':
+    case '>':
+      e.preventDefault()
+      if (running) setRunning(false)
+      stepOnce()
+      break
+    case 'r':
+    case 'R':
+      e.preventDefault()
+      resetAll()
+      break
+    case 'g':
+    case 'G':
+      e.preventDefault()
+      setGraphs(!showGraphs)
+      break
+    case '?':
+      e.preventDefault()
+      helpEl.hidden = !helpEl.hidden
+      break
+    default:
+      break
+  }
+})
+
 // --- loop ------------------------------------------------------------------
+
 let lastMs = performance.now()
 let lastCoupling: CouplingState = {
   contact: false,
@@ -202,29 +418,40 @@ let lastCoupling: CouplingState = {
 }
 
 function frame(nowMs: number): void {
-  const elapsed = nowMs - lastMs
+  const raw = nowMs - lastMs
   lastMs = nowMs
+  // Cap the delta so returning to a backgrounded tab does not fast-forward.
+  const elapsed = Math.min(raw, 100) * speed
 
   if (mode === 'sandbox') {
     sandbox.frame(elapsed, running)
-    requestAnimationFrame(frame)
-    return
+    if (running) sampleMotion()
+  } else {
+    if (running) {
+      world.advanceWith(elapsed, () => {
+        lastCoupling = coupling.update(world, hand.current())
+        return lastCoupling.force ? [lastCoupling.force] : []
+      })
+      sampleMotion()
+    }
+    view.draw(world, world.state(), lastCoupling)
+
+    if (world.escaped.size > 0) {
+      setStatus(`${[...world.escaped].join(', ')} left the scene and was parked`, 'warn')
+    }
   }
 
-  if (running) {
-    // Sample the hand once per fixed step, not once per rendered frame.
-    world.advanceWith(elapsed, () => {
-      lastCoupling = coupling.update(world, hand.current())
-      return lastCoupling.force ? [lastCoupling.force] : []
-    })
+  if (showGraphs) {
+    const label = recorder.tracked ?? '—'
+    chartTarget.textContent = recorder.tracked ? `· ${label}` : ''
+    charts.draw(recorder.data, label)
   }
 
-  view.draw(world, world.state(), lastCoupling)
   requestAnimationFrame(frame)
 }
 
 load(spec)
-// setMode sets its own status line for whichever mode it enters, so nothing
-// should overwrite it afterwards.
+refreshHistoryUi()
+setRunning(true)
 setMode(window.location.hash === '#sandbox' ? 'sandbox' : 'problem')
 requestAnimationFrame(frame)

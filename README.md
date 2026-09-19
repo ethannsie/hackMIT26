@@ -26,10 +26,13 @@ npm run verify:all        # both
 npm run check             # typecheck
 ```
 
-Open `#sandbox` in the URL to go straight into sandbox mode.
+Open `#sandbox` in the URL to go straight into sandbox mode. Press `?` in the
+app for keyboard shortcuts.
 
-**Run `npm run verify` before every push.** 39 checks, worst case 0.58%. It is
-the only thing standing between us and demoing wrong physics to a judge.
+**Run `npm run verify:all` before every push.** 41 + 16 checks, worst case
+0.58%. It is the only thing standing between us and demoing wrong physics to a
+judge — it has already caught a pendulum that silently decayed, a magnetic orbit
+that gained 2175% speed, and bodies falling off the end of the floor.
 
 Without an API key everything still works except photo ingest: pick a problem
 type from the dropdown and use the sliders. That is rung 4 of the failure
@@ -171,7 +174,8 @@ src/sim/         params -> scene -> deterministic world; closed forms; correctio
                  nine problem types — see CAPABILITIES.md
 src/hand/        the HandFrame contract, mouse mock, hand->force coupling
 src/extract/     browser-side compression and API client
-src/render/      canvas view and KaTeX derivation panel
+src/render/      canvas views, KaTeX derivation panel, motion graphs
+src/history.ts   rollback buffer (snapshots are spec + step count)
 server/          extraction API and the extraction prompt
 scripts/         verify-sims.ts (run this), e2e.ts
 ```

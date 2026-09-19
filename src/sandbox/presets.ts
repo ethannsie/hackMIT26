@@ -5,7 +5,7 @@
  * that opens on an empty grid gets a shrug at an expo table; one that opens
  * mid-Rube-Goldberg gets a question.
  */
-import type { SandboxScene } from './types.ts'
+import { DEFAULT_ARENA, type SandboxScene } from './types.ts'
 
 export const SANDBOX_PRESETS: Record<string, SandboxScene> = {
   /** The chain named in the plan: box on ramp triggering a pendulum. */
@@ -13,6 +13,7 @@ export const SANDBOX_PRESETS: Record<string, SandboxScene> = {
     name: 'Chain reaction',
     gravity_ms2: 9.81,
     ground: true,
+    arena: { width_m: 13, height_m: 4.5, walls: true },
     entities: [
       {
         id: 'ramp_1', kind: 'ramp', position_m: [-3.2, 2.0],
@@ -47,6 +48,7 @@ export const SANDBOX_PRESETS: Record<string, SandboxScene> = {
     name: 'Conservative playground',
     gravity_ms2: 9.81,
     ground: true,
+    arena: { width_m: 13, height_m: 5.5, walls: true },
     entities: [
       {
         id: 'spring_1', kind: 'spring', position_m: [-1.8, 3.0],
@@ -74,6 +76,8 @@ export const SANDBOX_PRESETS: Record<string, SandboxScene> = {
     name: 'Magnetic trap',
     gravity_ms2: 0,
     ground: false,
+    // Open scene: the field does the containing, not walls.
+    arena: { width_m: 14, height_m: 7, walls: false },
     entities: [
       {
         id: 'magnet_region_1', kind: 'magnet_region', position_m: [0, 1.6],
@@ -97,6 +101,7 @@ export const SANDBOX_PRESETS: Record<string, SandboxScene> = {
     name: 'Blank',
     gravity_ms2: 9.81,
     ground: true,
+    arena: { ...DEFAULT_ARENA },
     entities: [],
   },
 }

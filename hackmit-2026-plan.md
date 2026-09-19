@@ -117,7 +117,7 @@ Rules:
 | Physics | Matter.js (2D) | Every problem here is planar; solver is battle-tested |
 | Hand tracking | MediaPipe Tasks Vision, HandLandmarker | `worldLandmarks` gives metric 3D hand pose free |
 | Math display | KaTeX | Fast, no MathJax startup cost |
-| Sensors | ESP32 over WebSerial | No backend, no wifi dependency |
+| Sensors | ESP32 over USB serial → local Python bridge → WebSocket | No wifi dependency; WebSerial is unavailable in the GX10's browser (§9) |
 | Inference | ASUS Ascent GX10, local | ASUS challenge, works when venue wifi dies |
 | Fallback inference | Hosted API, 2s timeout | GX10 stall must never freeze a demo |
 
@@ -281,7 +281,7 @@ The VL53L1X defaults to **0x29**. The BNO055 is **0x28 or 0x29** depending on it
 
 ### Serial protocol
 
-Newline-delimited JSON over WebSerial, 50 to 100 Hz. No backend, no sockets, no wifi.
+Newline-delimited JSON over USB serial at 115200, 50 to 100 Hz. On the GX10 a local Python bridge re-serves it as a WebSocket (§9); no wifi.
 
 ```json
 {"t":1726790412,"depth_mm":412,"theta_deg":24.8,"gate":null}
@@ -292,7 +292,8 @@ Browser side:
 ```js
 const port = await navigator.serial.requestPort();
 await port.open({ baudRate: 115200 });
-// read, split on \n, JSON.parse, push into the same loop as MediaPipe
+// on the GX10: gx10/serial_bridge.py reads the port and re-serves it as ws://localhost:8765;
+// browser: new WebSocket(...).onmessage → JSON.parse → same loop as MediaPipe
 ```
 
 Keep the sensor read in the same animation frame loop as hand tracking. Two loops fighting each other is a 3 AM bug.
@@ -326,12 +327,12 @@ The browser app is a static page. Nothing forces it onto a laptop. Run Chromium 
 
 - **7 in. HDMI touchscreen** → GX10 HDMI. This is the sim canvas at hand height.
 - **Webcam** → GX10 USB.
-- **ESP32** → GX10 USB. Chromium on Linux supports WebSerial; the user needs to be in the `dialout` group (`sudo usermod -aG dialout $USER`, re-login).
+- **ESP32** → GX10 USB, read by `gx10/serial_bridge.py` and served to the browser as a local WebSocket (see below — WebSerial is out).
 - **Ollama** at `http://localhost:11434`. No Cat6, no laptop Ethernet adapter, no cross-machine latency.
 
 Laptops stay dev machines: edit, push, `git pull` on the GX10, reload. Keep the app host-agnostic (base URL in one config constant) so a laptop can run the demo if the box dies.
 
-Fallback deployment: laptop runs the browser, GX10 is only the inference endpoint over the network. Still hit local first, hosted API on a **2 second timeout**. A GX10 stall must never freeze a live demo.
+Fallback deployment: laptop runs the browser, GX10 is only the inference endpoint over the network (phone hotspot — venue Wi-Fi blocks device-to-device). Still hit local first, hosted API on a timeout. A GX10 stall must never freeze a live demo.
 
 ### First boot (we have display + keyboard + mouse, so not headless)
 
@@ -341,24 +342,22 @@ Fallback deployment: laptop runs the browser, GX10 is only the inference endpoin
 4. Update + reboots take up to ~10 min with no feedback. **Do not cut power.**
 5. Headless fallback if the display path fails: on first boot only, the box broadcasts a Wi-Fi hotspot `spark-xxxx` (SSID + password on the sticker on the Quick Start card). Join it, open `http://spark-xxxx.local`, same wizard. Photograph the sticker — the hotspot never comes back after setup.
 
-### After first boot
+### After first boot — done Sat 19 Sep evening
 
-```bash
-sudo systemctl enable --now ssh            # SSH from laptops: ssh hackmit@<hostname>.local
-sudo usermod -aG dialout $USER             # WebSerial to the ESP32
-sudo systemctl mask sleep.target suspend.target hibernate.target   # never sleep mid-demo
-# Settings → Power → Screen blank: never
-which ollama || curl -fsSL https://ollama.com/install.sh | sh
-sudo systemctl edit ollama                 # add: [Service] / Environment="OLLAMA_HOST=0.0.0.0"
-sudo systemctl restart ollama
-```
+Everything below is in `gx10/setup.sh` (re-runnable) and documented in `gx10/README.md`: SSH, `dialout`, no sleep/blank, Ollama on the LAN with models kept resident, Chromium, serial-bridge deps, repo clone.
 
-Models (pull on venue Wi-Fi or a wired jack, not phone data):
+**Models — both preinstalled, no pull needed:**
 
-- **Ingest:** `ollama pull qwen3-vl:32b` (~20 GB) — vision, good at strict JSON. Fits trivially in 128 GB.
-- **Live queries:** `ollama pull qwen3:8b` (~5 GB) — fast enough to answer while the user is interacting.
+| model | role | measured on the box |
+|---|---|---|
+| `qwen3.8` (Qwen 3.5 27B, **vision**) | ingest: photo → JSON spec | 18 tok/s; ~30 s per photo on the real prompt + strict schema. Correct and deterministic |
+| `nemotron-3.5-lightning` (33B MoE) | live "why?" queries | 67 tok/s; **0.9 s** per sentence warm |
 
-Smoke test: `curl http://localhost:11434/api/tags`. Ollama also serves an OpenAI-compatible API at `/v1/chat/completions`, so local vs hosted is one base-URL swap.
+`qwen3-vl:8b` is being pulled as a ~3× faster ingest option; A/B it Sunday morning.
+
+**Extraction is wired**: `server/index.ts` calls the GX10's Ollama through its OpenAI-compatible `/v1` with the same prompt and schema as the hosted path, then falls back to OpenAI. The fallback timeout is **45 s, not 2 s** — the 27B model needs ~30 s for a 538-token spec, and a 2 s timeout would mean the GX10 never answers. Live queries keep a short timeout; they are sub-second.
+
+**Sensors go serial → `gx10/serial_bridge.py` → `ws://localhost:8765` → browser.** Snap Chromium cannot open `/dev/ttyUSB0` and Firefox has no WebSerial, so the plan's WebSerial reader is replaced by a 100-line Python bridge. Better anyway: no port-picker click on the touchscreen, auto-reconnect when the ESP32 resets.
 
 ARM64 + Blackwell (`sm_121`) gotcha: anything past Ollama (vLLM, PyTorch) must come from NVIDIA NGC containers `26.01+`. Random pip wheels will not have the right CUDA arch.
 

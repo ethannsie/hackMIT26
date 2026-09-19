@@ -203,6 +203,38 @@ export class SimWorld {
 
 
   /**
+   * Put a body back to a recorded state, for timeline scrubbing.
+   *
+   * Corrections that carry their own internal state — the pendulum's angle and
+   * rate — are re-derived afterwards, or resuming from a scrubbed frame would
+   * snap the bob back to wherever the integrator last was.
+   */
+  applyBodyState(
+    id: string,
+    f: { x_m: number; y_m: number; angle_deg: number; vx_ms: number; vy_ms: number; omega_rads: number },
+  ): void {
+    const body = this.scene.byId[id]
+    if (!body || body.isStatic) return
+    Body.setPosition(body, { x: mToPx(f.x_m), y: -mToPx(f.y_m) })
+    Body.setAngle(body, f.angle_deg * (Math.PI / 180))
+    Body.setVelocity(body, { x: msToMatterVel(f.vx_ms), y: -msToMatterVel(f.vy_ms) })
+    Body.setAngularVelocity(body, f.omega_rads * FIXED_DT_S)
+    // A scrub is an explicit jump in simulation time, not a partial render
+    // delta that should be carried into the next play press.
+    this.accumulatorMs = 0
+  }
+
+  /** Re-derive any internal correction state from the bodies. */
+  resyncCorrections(): void {
+    this.corrections.resync?.()
+  }
+
+  /** Every body id the renderer and selection can address. */
+  get bodyIds(): string[] {
+    return Object.keys(this.scene.byId)
+  }
+
+  /**
    * Set a body's velocity in m/s, y positive UP.
    * Used when the hand releases a grabbed body — this is the throw.
    */

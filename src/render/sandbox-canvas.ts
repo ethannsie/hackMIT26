@@ -11,6 +11,12 @@ import { mToPx } from '../sim/units.ts'
 import type { SandboxWorld } from '../sandbox/world.ts'
 import type { Entity, EntityKind } from '../sandbox/types.ts'
 import { ICONS } from '../sandbox/palette.ts'
+import { FORCE_COLORS, type ForceVector } from '../sim/fbd.ts'
+
+export interface SandboxDrawOptions {
+  paths: Record<string, { x: number; y: number }[]>
+  forces: ForceVector[]
+}
 
 const COLORS = {
   bg: '#0f1115',
@@ -153,7 +159,72 @@ export class SandboxView {
     }
   }
 
-  draw(world: SandboxWorld, selectedId: string | null, armed: EntityKind | null, cursor: [number, number] | null): void {
+  /** Trajectory of a body, brightest at the present. */
+  private drawPath(points: { x: number; y: number }[], color: string, width: number): void {
+    if (points.length < 2) return
+    const { ctx } = this
+    ctx.strokeStyle = color
+    ctx.lineWidth = width
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
+    const n = points.length
+    for (let i = 1; i < n; i++) {
+      const a = points[i - 1]!
+      const b = points[i]!
+      ctx.globalAlpha = 0.12 + 0.68 * (i / n)
+      ctx.beginPath()
+      ctx.moveTo(this.sx(mToPx(a.x)), this.sy(-mToPx(a.y)))
+      ctx.lineTo(this.sx(mToPx(b.x)), this.sy(-mToPx(b.y)))
+      ctx.stroke()
+    }
+    ctx.globalAlpha = 1
+  }
+
+  /** Free-body diagram, normalised so the largest force fills a fixed length. */
+  private drawForces(body: Matter.Body, forces: ForceVector[]): void {
+    if (forces.length === 0) return
+    const { ctx } = this
+    const ox = this.sx(body.position.x)
+    const oy = this.sy(body.position.y)
+    const peak = Math.max(...forces.map((f) => f.magnitude_n), 1e-9)
+
+    for (const f of forces) {
+      if (f.magnitude_n < 1e-6) continue
+      const len = (f.magnitude_n / peak) * 72
+      const ux = f.vec_n[0] / f.magnitude_n
+      const uy = -f.vec_n[1] / f.magnitude_n
+      const tipX = ox + ux * len
+      const tipY = oy + uy * len
+      ctx.strokeStyle = FORCE_COLORS[f.kind]
+      ctx.fillStyle = FORCE_COLORS[f.kind]
+      ctx.lineWidth = f.kind === 'net' ? 2 : 2.5
+      if (f.kind === 'net') ctx.setLineDash([5, 3])
+      ctx.beginPath()
+      ctx.moveTo(ox, oy)
+      ctx.lineTo(tipX, tipY)
+      ctx.stroke()
+      ctx.setLineDash([])
+      const a = Math.atan2(uy, ux)
+      ctx.beginPath()
+      ctx.moveTo(tipX, tipY)
+      ctx.lineTo(tipX - 9 * Math.cos(a - 0.38), tipY - 9 * Math.sin(a - 0.38))
+      ctx.lineTo(tipX - 9 * Math.cos(a + 0.38), tipY - 9 * Math.sin(a + 0.38))
+      ctx.closePath()
+      ctx.fill()
+      ctx.font = '600 10px ui-monospace, monospace'
+      ctx.textAlign = ux < -0.25 ? 'right' : 'left'
+      ctx.fillText(`${f.label} ${f.magnitude_n.toFixed(1)} N`, tipX + ux * 10 - uy * 5, tipY + uy * 10 + ux * 5 + 3)
+      ctx.textAlign = 'left'
+    }
+  }
+
+  draw(
+    world: SandboxWorld,
+    selectedId: string | null,
+    armed: EntityKind | null,
+    cursor: [number, number] | null,
+    opts: SandboxDrawOptions = { paths: {}, forces: [] },
+  ): void {
     this.resize()
     const { ctx } = this
     ctx.fillStyle = COLORS.bg
@@ -330,6 +401,20 @@ export class SandboxView {
         ctx.font = '11px ui-monospace, monospace'
         ctx.fillText(`${state.speed_ms.toFixed(2)} m/s`, fx + dx + 6, fy + dy - 6)
       }
+    }
+
+    // Paths over the bodies, for the same reason as in the problem view.
+    for (const [id, pts] of Object.entries(opts.paths)) {
+      const isSel = id === selectedId
+      this.drawPath(pts, isSel ? COLORS.velocity : COLORS.dim, isSel ? 2 : 1.5)
+    }
+
+    // Free-body diagram on the selection.
+    if (opts.forces.length > 0) {
+      const target = selectedId ? world.bodyById(selectedId) : undefined
+      const fallback = world.components.find((c) => c.main && !c.main.isStatic)?.main
+      const body = target ?? fallback
+      if (body) this.drawForces(body, opts.forces)
     }
 
     // Ghost preview of the armed component.

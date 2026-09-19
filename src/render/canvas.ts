@@ -11,6 +11,17 @@ import Matter from 'matter-js'
 import { mToPx } from '../sim/units.ts'
 import type { SimWorld, SimState } from '../sim/world.ts'
 import type { CouplingState } from '../hand/coupling.ts'
+import { FORCE_COLORS, type ForceVector } from '../sim/fbd.ts'
+
+export interface DrawOptions {
+  /** Body the graphs and the free-body diagram are following. */
+  selectedId: string | null
+  /** Traced paths, keyed by body id, in scene metres. */
+  paths: Record<string, { x: number; y: number }[]>
+  /** Forces on the selected body. Empty hides the diagram. */
+  forces: ForceVector[]
+  showForces: boolean
+}
 
 const COLORS = {
   bg: '#0f1115',
@@ -26,6 +37,9 @@ const COLORS = {
   sweep: '#c792ea',
   text: '#c9d1d9',
   dim: '#6e7681',
+  selected: '#5ee6a8',
+  path: '#4da3ff',
+  pathDim: '#39465c',
 }
 
 export class CanvasView {
@@ -353,7 +367,109 @@ export class CanvasView {
     }
   }
 
-  draw(world: SimWorld, state: SimState, coupling: CouplingState): void {
+  /** Body under a screen point, for click-to-select. */
+  pick(world: SimWorld, clientX: number, clientY: number): string | null {
+    const rect = this.canvas.getBoundingClientRect()
+    const x = (clientX - rect.left - this.originX) / this.scale
+    const y = (clientY - rect.top - this.originY) / this.scale
+
+    let best: string | null = null
+    let bestDist = Infinity
+    for (const id of world.bodyIds) {
+      const body = world.bodyById(id)
+      if (!body || body.label === 'ground') continue
+      const b = body.bounds
+      if (x < b.min.x || x > b.max.x || y < b.min.y || y > b.max.y) continue
+      const d = Math.hypot(body.position.x - x, body.position.y - y)
+      // Prefer movable bodies, so a ball resting on a ramp wins the click.
+      const score = body.isStatic ? d + 1e6 : d
+      if (score < bestDist) {
+        bestDist = score
+        best = id
+      }
+    }
+    return best
+  }
+
+  /** Trajectory of a body, brightest at the present. */
+  private drawPath(points: { x: number; y: number }[], color: string, width: number): void {
+    if (points.length < 2) return
+    const { ctx } = this
+    ctx.strokeStyle = color
+    ctx.lineWidth = width
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
+    // Fade the tail so the direction of travel reads without an arrowhead.
+    const n = points.length
+    for (let i = 1; i < n; i++) {
+      const a = points[i - 1]!
+      const b = points[i]!
+      ctx.globalAlpha = 0.12 + 0.68 * (i / n)
+      ctx.beginPath()
+      ctx.moveTo(this.sx(mToPx(a.x)), this.sy(-mToPx(a.y)))
+      ctx.lineTo(this.sx(mToPx(b.x)), this.sy(-mToPx(b.y)))
+      ctx.stroke()
+    }
+    ctx.globalAlpha = 1
+  }
+
+  /**
+   * Free-body diagram on the selected body.
+   *
+   * Arrow lengths are normalised so the largest force fills a fixed screen
+   * length, with the magnitude printed beside each. Scaling newtons to pixels
+   * directly would make a 0.2 N spring force invisible next to a 200 N normal
+   * force, which is the case where the diagram matters most.
+   */
+  private drawForces(body: Matter.Body, forces: ForceVector[]): void {
+    if (forces.length === 0) return
+    const { ctx } = this
+    const ox = this.sx(body.position.x)
+    const oy = this.sy(body.position.y)
+
+    const peak = Math.max(...forces.map((f) => f.magnitude_n), 1e-9)
+    const maxLen = 78
+
+    for (const f of forces) {
+      if (f.magnitude_n < 1e-6) continue
+      const len = (f.magnitude_n / peak) * maxLen
+      const ux = f.vec_n[0] / f.magnitude_n
+      const uy = -f.vec_n[1] / f.magnitude_n // to screen space
+      const tipX = ox + ux * len
+      const tipY = oy + uy * len
+      const color = FORCE_COLORS[f.kind]
+      const dashed = f.kind === 'net'
+
+      ctx.strokeStyle = color
+      ctx.fillStyle = color
+      ctx.lineWidth = dashed ? 2 : 2.5
+      if (dashed) ctx.setLineDash([5, 3])
+      ctx.beginPath()
+      ctx.moveTo(ox, oy)
+      ctx.lineTo(tipX, tipY)
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      const a = Math.atan2(uy, ux)
+      ctx.beginPath()
+      ctx.moveTo(tipX, tipY)
+      ctx.lineTo(tipX - 9 * Math.cos(a - 0.38), tipY - 9 * Math.sin(a - 0.38))
+      ctx.lineTo(tipX - 9 * Math.cos(a + 0.38), tipY - 9 * Math.sin(a + 0.38))
+      ctx.closePath()
+      ctx.fill()
+
+      // Label beyond the head, nudged along the arrow's own normal so
+      // neighbouring arrows do not stack their text on top of each other.
+      ctx.font = '600 10px ui-monospace, monospace'
+      ctx.textAlign = ux < -0.25 ? 'right' : 'left'
+      const lx = tipX + ux * 10 - uy * 5
+      const ly = tipY + uy * 10 + ux * 5 + 3
+      ctx.fillText(`${f.label} ${f.magnitude_n.toFixed(1)} N`, lx, ly)
+      ctx.textAlign = 'left'
+    }
+  }
+
+  draw(world: SimWorld, state: SimState, coupling: CouplingState, opts: DrawOptions): void {
     this.resize()
     this.frame(world, state)
 
@@ -380,6 +496,30 @@ export class CanvasView {
             ? COLORS.static
             : COLORS.dynamic
       this.drawBody(body, fill)
+    }
+
+    // Paths go over the bodies, not under them: a block sliding down a ramp
+    // travels along the ramp's own surface, so a path drawn underneath is
+    // completely hidden by the ramp.
+    for (const [id, pts] of Object.entries(opts.paths)) {
+      const isSel = id === opts.selectedId
+      this.drawPath(pts, isSel ? COLORS.path : COLORS.pathDim, isSel ? 2 : 1.5)
+    }
+
+    if (opts.selectedId) {
+      const sel = world.bodyById(opts.selectedId)
+      if (sel) {
+        const r = sel.circleRadius && sel.circleRadius > 0
+          ? sel.circleRadius * this.scale + 6
+          : Math.max(sel.bounds.max.x - sel.bounds.min.x, sel.bounds.max.y - sel.bounds.min.y) * this.scale * 0.72 + 6
+        ctx.strokeStyle = COLORS.selected
+        ctx.lineWidth = 2
+        ctx.setLineDash([4, 3])
+        ctx.beginPath()
+        ctx.arc(this.sx(sel.position.x), this.sy(sel.position.y), r, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
     }
 
     // Constraints (the pendulum rod).
@@ -410,6 +550,11 @@ export class CanvasView {
     }
 
     this.drawConceptOverlay(world, state)
+
+    if (opts.showForces && opts.selectedId) {
+      const body = world.bodyById(opts.selectedId)
+      if (body) this.drawForces(body, opts.forces)
+    }
 
     // Hand contact.
     if (coupling.contactPoint_m) {

@@ -25,6 +25,7 @@ import {
   RAD,
 } from '../sim/units.ts'
 import { DEFAULT_ARENA, isStaticKind, type Entity, type SandboxScene } from './types.ts'
+import type { ForceVector } from '../sim/fbd.ts'
 
 const { Engine, Composite, Bodies, Body } = Matter
 
@@ -63,6 +64,8 @@ export class SandboxWorld {
   readonly scene: SandboxScene
   private built: Built[] = []
   private accumulatorMs = 0
+  /** Measured over the most recent fixed step, in m/s² (y up). */
+  private accelerationById = new Map<string, [number, number]>()
   steps = 0
 
   /**
@@ -414,6 +417,11 @@ export class SandboxWorld {
   }
 
   step(forces: { bodyId: string; force_n: [number, number] }[] = []): void {
+    const before = new Map<string, [number, number]>()
+    for (const b of this.built) {
+      if (!b.main || b.main.isStatic) continue
+      before.set(b.entity.id, [matterVelToMs(b.main.velocity.x), -matterVelToMs(b.main.velocity.y)])
+    }
     const n = this.subSteps
     const dtMs = FIXED_DT_MS / n
     const dtS = FIXED_DT_S / n
@@ -436,6 +444,17 @@ export class SandboxWorld {
     }
 
     this.enforceEscapeNet()
+    for (const b of this.built) {
+      if (!b.main || b.main.isStatic) continue
+      const prior = before.get(b.entity.id)
+      if (!prior) continue
+      const vx = matterVelToMs(b.main.velocity.x)
+      const vy = -matterVelToMs(b.main.velocity.y)
+      this.accelerationById.set(b.entity.id, [
+        (vx - prior[0]) / FIXED_DT_S,
+        (vy - prior[1]) / FIXED_DT_S,
+      ])
+    }
     this.steps += 1
   }
 
@@ -501,6 +520,113 @@ export class SandboxWorld {
 
   get time_s(): number {
     return this.steps * FIXED_DT_S
+  }
+
+  /** Put a body back to a recorded state, for timeline scrubbing. */
+  applyBodyState(
+    id: string,
+    f: { x_m: number; y_m: number; angle_deg: number; vx_ms: number; vy_ms: number },
+  ): void {
+    const b = this.built.find((x) => x.entity.id === id)
+    if (!b?.main || b.main.isStatic) return
+    Body.setPosition(b.main, { x: mToPx(f.x_m), y: -mToPx(f.y_m) })
+    Body.setAngle(b.main, f.angle_deg * DEG)
+    Body.setVelocity(b.main, { x: msToMatterVel(f.vx_ms), y: -msToMatterVel(f.vy_ms) })
+    this.accumulatorMs = 0
+    this.accelerationById.delete(id)
+    // A pendulum carries its own angle and rate; re-derive them or resuming
+    // from a scrubbed frame would snap the bob back.
+    if (b.entity.kind === 'pendulum' && b.anchor) {
+      const dx = b.main.position.x - b.anchor.position.x
+      const dy = b.main.position.y - b.anchor.position.y
+      b.theta = Math.atan2(dx, dy)
+      const tx = Math.cos(b.theta)
+      const ty = -Math.sin(b.theta)
+      const vt = matterVelToMs(b.main.velocity.x) * tx + -matterVelToMs(b.main.velocity.y) * -ty
+      b.omega = vt / b.entity.length_m
+    }
+  }
+
+  /**
+   * Forces on one body, for the free-body diagram.
+   *
+   * Only the forces this file actually applies are known exactly: weight, the
+   * spring, and the magnetic deflection. Everything a contact does is lumped
+   * into one "contact" arrow, recovered as the difference between the measured
+   * net force (m·a, differenced from velocity) and those known terms. That is
+   * honest — it is the normal force and friction combined, because from outside
+   * the solver there is no way to separate them.
+   */
+  forcesOn(id: string): ForceVector[] {
+    const b = this.built.find((x) => x.entity.id === id)
+    if (!b?.main || b.main.isStatic) return []
+    const body = b.main
+    const m = body.mass
+    const out: ForceVector[] = []
+
+    const g = this.scene.gravity_ms2
+    if (g !== 0) {
+      out.push({
+        label: 'W', name: 'Weight', kind: 'weight',
+        vec_n: [0, -m * g], magnitude_n: m * g,
+      })
+    }
+
+    if (b.entity.kind === 'spring' && b.anchor) {
+      const dx = body.position.x - b.anchor.position.x
+      const dy = body.position.y - b.anchor.position.y
+      const len = Math.hypot(dx, dy)
+      if (len > 1e-9) {
+        const ext = pxToM(len) - b.entity.rest_length_m
+        const mag = -b.entity.stiffness_n_per_m * ext
+        const fx = (dx / len) * mag
+        const fy = -(dy / len) * mag // to y-up
+        out.push({
+          label: 'F_s', name: 'Spring force (−kx)', kind: 'tension',
+          vec_n: [fx, fy], magnitude_n: Math.abs(mag),
+        })
+      }
+    }
+
+    const e = b.entity
+    if ((e.kind === 'ball' || e.kind === 'box') && e.charge_c !== 0) {
+      for (const r of this.built) {
+        if (r.entity.kind !== 'magnet_region' || !r.region) continue
+        const p = body.position
+        const bb = r.region.bounds
+        if (p.x < bb.min.x || p.x > bb.max.x || p.y < bb.min.y || p.y > bb.max.y) continue
+        const qB = e.charge_c * r.entity.b_field_tesla
+        const vx = matterVelToMs(body.velocity.x)
+        const vy = -matterVelToMs(body.velocity.y)
+        out.push({
+          label: 'F_B', name: 'Magnetic force qv × B', kind: 'applied',
+          vec_n: [qB * vy, -qB * vx], magnitude_n: Math.abs(qB) * Math.hypot(vx, vy),
+        })
+        break
+      }
+    }
+
+    // Matter resolves contacts internally. Recover their resultant from F = ma
+    // after subtracting the forces we explicitly model, which makes a normal /
+    // collision / rod-reaction arrow available for any selected movable body.
+    const a = this.accelerationById.get(id)
+    if (a) {
+      const net: [number, number] = [m * a[0], m * a[1]]
+      const known = out.reduce<[number, number]>(
+        (sum, f) => [sum[0] + f.vec_n[0], sum[1] + f.vec_n[1]],
+        [0, 0],
+      )
+      const contact: [number, number] = [net[0] - known[0], net[1] - known[1]]
+      const contactMag = Math.hypot(contact[0], contact[1])
+      if (contactMag > 1e-3) {
+        out.push({
+          label: 'F_c', name: 'Contact / constraint resultant', kind: 'normal',
+          vec_n: contact, magnitude_n: contactMag,
+        })
+      }
+      out.push({ label: 'ΣF', name: 'Net force (m·a)', kind: 'net', vec_n: net, magnitude_n: Math.hypot(...net) })
+    }
+    return out
   }
 
   setVelocityMs(id: string, v: [number, number]): void {

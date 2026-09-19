@@ -35,6 +35,8 @@ export interface Corrections {
   preStep(): void
   /** Runs immediately after each Engine.update. */
   postStep?(): void
+  /** Re-derive internal state from the bodies, after an external state change. */
+  resync?(): void
   /** Detaches event listeners, so reset() does not leak them. */
   dispose(): void
 }
@@ -423,6 +425,18 @@ function pendulumDynamics(
       })
       const speed = msToMatterVel(omega * L_m)
       Body.setVelocity(bob, { x: Math.cos(theta) * speed, y: -Math.sin(theta) * speed })
+    },
+    resync(): void {
+      // Recover theta and omega from wherever the bob now is, so scrubbing the
+      // timeline and pressing play continues from that frame rather than
+      // snapping back to the integrator's last angle.
+      const dx = bob.position.x - pivot.position.x
+      const dy = bob.position.y - pivot.position.y
+      theta = Math.atan2(dx, dy)
+      const tx = Math.cos(theta)
+      const ty = -Math.sin(theta)
+      const vt = matterVelToMs(bob.velocity.x) * tx + -matterVelToMs(bob.velocity.y) * -ty
+      omega = vt / L_m
     },
     dispose(): void {},
   }

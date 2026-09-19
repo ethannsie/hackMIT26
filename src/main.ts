@@ -17,6 +17,9 @@ import { extractFromImage } from './extract/client.ts'
 import { PRESETS, KNOBS } from './presets.ts'
 import { SandboxMode } from './sandbox/ui.ts'
 import { History } from './history.ts'
+import { Timeline } from './render/timeline.ts'
+import { forcesFor } from './sim/fbd.ts'
+import type { DrawOptions } from './render/canvas.ts'
 import type { Sample } from './render/charts.ts'
 import type { SandboxScene } from './sandbox/types.ts'
 import { CONFIDENCE_FLOOR, PROBLEM_TYPES, type ProblemSpec, type ProblemType } from './spec/types.ts'
@@ -45,6 +48,10 @@ const chartCanvas = $<HTMLCanvasElement>('#charts')
 const chartTarget = $<HTMLSpanElement>('#chart-target')
 const helpEl = $<HTMLDivElement>('#help')
 const undoBtn = $<HTMLButtonElement>('#undo')
+const scrubEl = $<HTMLInputElement>('#scrub')
+const scrubTime = $<HTMLSpanElement>('#scrub-time')
+const scrubHint = $<HTMLSpanElement>('#scrub-hint')
+const scrubBar = $<HTMLDivElement>('#scrub-bar')
 const historyEl = $<HTMLSelectElement>('#history')
 
 function setStatus(text: string, tone: 'ok' | 'warn' | 'error' = 'ok'): void {
@@ -58,7 +65,18 @@ const recorder = new MotionRecorder()
 const charts = new MotionCharts(chartCanvas)
 // Sandbox asks us to snapshot before it changes anything, so placing, deleting
 // and slider edits are all undoable through the same buffer.
-const sandbox = new SandboxMode(canvas, sandboxAside, setStatus, (label) => remember(label))
+const sandbox = new SandboxMode(
+  canvas,
+  sandboxAside,
+  setStatus,
+  (label) => remember(label),
+  () => {
+    // Rebuilding an authored scene returns it to t=0. Its old playback frames
+    // cannot safely be applied to this new set of bodies.
+    timeline.clear()
+    recorder.clear(null)
+  },
+)
 
 type Mode = 'problem' | 'sandbox'
 let mode: Mode = 'problem'
@@ -82,6 +100,11 @@ type Snap =
   | { kind: 'sandbox'; scene: SandboxScene; steps: number; samples: Sample[]; tracked: string | null }
 
 const rollback = new History<Snap>()
+const timeline = new Timeline()
+
+/** Body the graphs and the free-body diagram follow. Null means the problem's own subject. */
+let selectedId: string | null = null
+let showForces = true
 
 /** Capture the state as it is right now, before something destroys it. */
 function remember(label: string): void {
@@ -96,6 +119,7 @@ function remember(label: string): void {
 }
 
 function restore(snap: Snap): void {
+  timeline.clear()
   if (snap.kind === 'sandbox') {
     if (mode !== 'sandbox') setMode('sandbox')
     sandbox.restoreScene(snap.scene, snap.steps)
@@ -112,6 +136,7 @@ function restore(snap: Snap): void {
     refreshDerivation()
   }
   recorder.restore(snap.samples, snap.tracked)
+  recordFrame()
   setRunning(false)
   refreshHistoryUi()
 }
@@ -141,6 +166,9 @@ function load(next: ProblemSpec, nextRepairs: string[] = []): void {
   repairs = nextRepairs
   world = new SimWorld(spec)
   recorder.clear(null)
+  timeline.clear()
+  selectedId = null
+  recordFrame()
   typeEl.value = spec.problem_type
   buildKnobs()
   refreshDerivation()
@@ -180,6 +208,8 @@ function buildKnobs(): void {
       spec = edited
       world = new SimWorld(spec)
       recorder.clear(null)
+      timeline.clear()
+      recordFrame()
       refreshDerivation()
     })
 
@@ -191,16 +221,28 @@ function buildKnobs(): void {
 // --- transport -------------------------------------------------------------
 
 function setRunning(next: boolean): void {
+  // Playing forward from a scrubbed frame makes that frame the new present:
+  // everything after it is discarded, the way a tape works.
+  if (next && timeline.scrubbing) {
+    timeline.commitToCursor()
+    setStatus('resumed from the scrubbed frame — later history discarded')
+  }
   running = next
   playBtn.textContent = running ? '❚❚' : '▶'
   playBtn.title = running ? 'Pause (Space)' : 'Play (Space)'
   stepBtn.disabled = running
+  refreshScrubber()
 }
 
 function stepOnce(): void {
-  if (mode === 'sandbox') sandbox.stepOnce()
+  if (mode === 'sandbox') {
+    sandbox.stepOnce()
+    recordFrame()
+    sampleMotion()
+  }
   else {
     world.step(lastCoupling.force ? [lastCoupling.force] : [])
+    recordFrame()
     sampleMotion()
   }
 }
@@ -209,10 +251,15 @@ function resetAll(): void {
   remember('before reset')
   if (mode === 'sandbox') {
     sandbox.reset()
+    timeline.clear()
+    recorder.clear(null)
+    recordFrame()
     setStatus('sandbox reset to the authored scene')
   } else {
     world.reset()
     recorder.clear(null)
+    timeline.clear()
+    recordFrame()
     setStatus('reset')
   }
 }
@@ -221,6 +268,7 @@ function setGraphs(next: boolean): void {
   showGraphs = next
   drawer.hidden = !showGraphs
   graphsBtn.classList.toggle('on', showGraphs)
+  scrubBar.classList.toggle('with-drawer', showGraphs)
 }
 
 function setMode(next: Mode): void {
@@ -232,6 +280,8 @@ function setMode(next: Mode): void {
   typeEl.hidden = inSandbox
   fileEl.parentElement!.hidden = inSandbox
   recorder.clear(null)
+  timeline.clear()
+  selectedId = null
 
   const hash = inSandbox ? '#sandbox' : ''
   if (window.location.hash !== hash) {
@@ -241,24 +291,113 @@ function setMode(next: Mode): void {
   if (inSandbox) {
     hand.stop()
     sandbox.start()
+    recordFrame()
   } else {
     sandbox.stop()
     void hand.start()
+    recordFrame()
     setStatus('drag to push · hold shift to grab and throw · space pauses')
   }
 }
 
 // --- graphs ----------------------------------------------------------------
 
-function sampleMotion(): void {
+/** Snapshot every body this step, for scrubbing and path tracing. */
+function recordFrame(): void {
   if (mode === 'sandbox') {
-    const s = sandbox.trackedState()
-    if (s) recorder.push(s.id, s.t_s, s.position_m, s.velocity_ms)
-    else recorder.clear(null)
+    const bodies: Record<string, import('./render/timeline.ts').BodyFrame> = {}
+    for (const b of sandbox.bodyStates()) {
+      bodies[b.id] = {
+        x_m: b.position_m[0], y_m: b.position_m[1], angle_deg: b.angle_deg,
+        vx_ms: b.velocity_ms[0], vy_ms: b.velocity_ms[1], omega_rads: 0,
+      }
+    }
+    timeline.record(sandbox.steps, sandbox.simTime, bodies)
     return
   }
   const st = world.state()
-  recorder.push(st.focus.id, st.time_s, st.focus.position_m, st.focus.velocity_ms)
+  const bodies: Record<string, import('./render/timeline.ts').BodyFrame> = {}
+  for (const [id, b] of Object.entries(st.bodies)) {
+    if (b.mass_kg <= 0) continue // static scenery never moves
+    bodies[id] = {
+      x_m: b.position_m[0], y_m: b.position_m[1], angle_deg: b.angle_deg,
+      vx_ms: b.velocity_ms[0], vy_ms: b.velocity_ms[1], omega_rads: b.angular_velocity_rads,
+    }
+  }
+  timeline.record(world.steps, st.time_s, bodies)
+}
+
+/** Put the live bodies where a recorded frame says they were. */
+function applyFrame(i: number): void {
+  const frame = timeline.seek(i)
+  if (!frame) return
+  if (mode === 'sandbox') {
+    sandbox.applyFrame(frame.bodies, frame.step)
+  } else {
+    for (const [id, f] of Object.entries(frame.bodies)) world.applyBodyState(id, f)
+    world.steps = frame.step
+    world.resyncCorrections()
+  }
+  scrubTime.textContent = `${frame.t_s.toFixed(2)} s`
+  // Graphs follow the scrub position, so the plot and the scene agree.
+  rebuildGraphHistory(i)
+}
+
+function refreshScrubber(): void {
+  const n = timeline.length
+  scrubEl.max = String(Math.max(0, n - 1))
+  scrubEl.disabled = running || n < 2
+  if (!timeline.scrubbing) {
+    scrubEl.value = String(Math.max(0, n - 1))
+    const f = timeline.current
+    scrubTime.textContent = `${(f?.t_s ?? 0).toFixed(2)} s`
+  }
+  scrubHint.textContent = running
+    ? 'press space to pause, then scrub'
+    : n < 2
+      ? 'no history yet'
+      : timeline.scrubbing
+        ? 'play resumes from here'
+        : `${n} frames`
+}
+
+/** Rebuild the graph buffer from the timeline, up to a frame index. */
+function rebuildGraphHistory(upTo: number): void {
+  const id = activeBodyId()
+  if (!id) {
+    recorder.clear(null)
+    return
+  }
+  recorder.clear(id)
+  const frames = timeline.all
+  const end = Math.min(upTo, frames.length - 1)
+  for (let i = 0; i <= end; i++) {
+    const b = frames[i]!.bodies[id]
+    if (!b) continue
+    recorder.push(id, frames[i]!.t_s, [b.x_m, b.y_m], [b.vx_ms, b.vy_ms])
+  }
+}
+
+/** The body the graphs and the diagram are about. */
+function activeBodyId(): string | null {
+  if (mode === 'sandbox') return sandbox.selectedEntityId() ?? sandbox.firstMovableId()
+  if (selectedId && world.bodyById(selectedId)) return selectedId
+  return world.state().focus.id
+}
+
+function sampleMotion(): void {
+  const id = activeBodyId()
+  if (!id) {
+    recorder.clear(null)
+    return
+  }
+  if (mode === 'sandbox') {
+    const b = sandbox.bodyStates().find((x) => x.id === id)
+    if (b) recorder.push(id, sandbox.simTime, b.position_m, b.velocity_ms)
+    return
+  }
+  const b = world.state().bodies[id]
+  if (b) recorder.push(id, world.time_s, b.position_m, b.velocity_ms)
 }
 
 chartCanvas.addEventListener('mousemove', (e) => {
@@ -286,6 +425,23 @@ speedEl.addEventListener('change', () => {
 })
 playBtn.addEventListener('click', () => setRunning(!running))
 undoBtn.addEventListener('click', undoOnce)
+
+scrubEl.addEventListener('input', () => {
+  if (running) setRunning(false)
+  applyFrame(Number(scrubEl.value))
+  refreshScrubber()
+})
+
+// Click a body to make the graphs and the diagram follow it.
+canvas.addEventListener('mousedown', (e) => {
+  if (mode !== 'problem') return
+  const hit = view.pick(world, e.clientX, e.clientY)
+  if (hit) {
+    selectedId = hit
+    rebuildGraphHistory(timeline.index)
+    setStatus(`tracking ${hit}`)
+  }
+})
 historyEl.addEventListener('change', () => {
   const id = Number(historyEl.value)
   if (!id) return
@@ -397,6 +553,26 @@ window.addEventListener('keydown', (e) => {
       e.preventDefault()
       setGraphs(!showGraphs)
       break
+    case 'v':
+    case 'V':
+      e.preventDefault()
+      showForces = !showForces
+      setStatus(showForces ? 'free-body diagram on' : 'free-body diagram off')
+      break
+    case 'ArrowLeft':
+      e.preventDefault()
+      if (running) setRunning(false)
+      applyFrame(Math.max(0, timeline.index - 1))
+      scrubEl.value = String(timeline.index)
+      refreshScrubber()
+      break
+    case 'ArrowRight':
+      e.preventDefault()
+      if (running) setRunning(false)
+      applyFrame(Math.min(timeline.length - 1, timeline.index + 1))
+      scrubEl.value = String(timeline.index)
+      refreshScrubber()
+      break
     case '?':
       e.preventDefault()
       helpEl.hidden = !helpEl.hidden
@@ -423,23 +599,48 @@ function frame(nowMs: number): void {
   // Cap the delta so returning to a backgrounded tab does not fast-forward.
   const elapsed = Math.min(raw, 100) * speed
 
+  const paths: Record<string, { x: number; y: number }[]> = {}
+  for (const id of timeline.movingIds()) paths[id] = timeline.pathFor(id)
+
+  // Selection can change while paused (notably in Sandbox). Rebuild from the
+  // timeline immediately so the drawer never shows the last object's graph.
+  if (recorder.tracked !== activeBodyId()) rebuildGraphHistory(timeline.index)
+
   if (mode === 'sandbox') {
+    sandbox.lastPaths = paths
+    sandbox.showForces = showForces
     sandbox.frame(elapsed, running)
-    if (running) sampleMotion()
+    if (running) {
+      recordFrame()
+      sampleMotion()
+    }
   } else {
     if (running) {
       world.advanceWith(elapsed, () => {
         lastCoupling = coupling.update(world, hand.current())
         return lastCoupling.force ? [lastCoupling.force] : []
       })
+      recordFrame()
       sampleMotion()
     }
-    view.draw(world, world.state(), lastCoupling)
+
+    const st = world.state()
+    const activeId = activeBodyId()
+    const activeState = activeId ? st.bodies[activeId] : undefined
+    const opts: DrawOptions = {
+      selectedId: activeId,
+      paths,
+      forces: showForces && activeState ? forcesFor(world.params, activeState) : [],
+      showForces,
+    }
+    view.draw(world, st, lastCoupling, opts)
 
     if (world.escaped.size > 0) {
       setStatus(`${[...world.escaped].join(', ')} left the scene and was parked`, 'warn')
     }
   }
+
+  refreshScrubber()
 
   if (showGraphs) {
     const label = recorder.tracked ?? '—'

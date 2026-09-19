@@ -13,6 +13,7 @@ import { loadPreset, SANDBOX_PRESETS } from './presets.ts'
 import { FIELDS, HINTS, ICONS, LABELS, makeEntity, nextId } from './palette.ts'
 import { ENTITY_KINDS, isStaticKind, type Entity, type EntityKind, type SandboxScene } from './types.ts'
 import { SandboxView } from '../render/sandbox-canvas.ts'
+import type { ForceVector } from '../sim/fbd.ts'
 
 export class SandboxMode {
   private scene: SandboxScene
@@ -36,6 +37,8 @@ export class SandboxMode {
     private setStatus: (text: string, tone?: 'ok' | 'warn' | 'error') => void,
     /** Called with a label just before any destructive edit, for the rollback buffer. */
     private beforeChange: (label: string) => void = () => {},
+    /** Lets the app discard playback frames when this scene is rebuilt. */
+    private afterSceneChange: () => void = () => {},
   ) {
     this.scene = loadPreset('chain_reaction')
     this.world = new SandboxWorld(this.scene)
@@ -84,6 +87,7 @@ export class SandboxMode {
     this.world = new SandboxWorld(this.scene)
     this.tracker.reset()
     this.reportedEscape = false
+    this.afterSceneChange()
   }
 
   reset(): void {
@@ -110,6 +114,43 @@ export class SandboxMode {
       position_m: picked.position_m,
       velocity_ms: picked.velocity_ms,
     }
+  }
+
+  /** Live state of every movable component, for the timeline and graphs. */
+  bodyStates(): ReturnType<SandboxWorld['states']> {
+    return this.world.states()
+  }
+
+  /** Put the bodies where a recorded frame says they were. */
+  applyFrame(
+    frame: Record<string, { x_m: number; y_m: number; angle_deg: number; vx_ms: number; vy_ms: number }>,
+    step: number,
+  ): void {
+    for (const [id, f] of Object.entries(frame)) this.world.applyBodyState(id, f)
+    this.world.steps = step
+  }
+
+  selectedEntityId(): string | null {
+    if (!this.selectedId) return null
+    return this.world.bodyById(this.selectedId) ? this.selectedId : null
+  }
+
+  firstMovableId(): string | null {
+    return this.world.states()[0]?.id ?? null
+  }
+
+  /** Forces on the selected body, for the free-body diagram. */
+  forcesOnSelection(): ForceVector[] {
+    const id = this.selectedEntityId() ?? this.firstMovableId()
+    if (!id) return []
+    return this.world.forcesOn(id)
+  }
+
+  /** Traced paths for everything that has moved. */
+  paths(timeline: { movingIds(): string[]; pathFor(id: string): { x: number; y: number }[] }): Record<string, { x: number; y: number }[]> {
+    const out: Record<string, { x: number; y: number }[]> = {}
+    for (const id of timeline.movingIds()) out[id] = timeline.pathFor(id)
+    return out
   }
 
   /** A copy of the authored scene, for a rollback snapshot. */
@@ -165,7 +206,10 @@ export class SandboxMode {
     if (running && !this.dragging) {
       this.world.advanceWith(elapsedMs, () => [])
     }
-    this.view.draw(this.world, this.selectedId, this.armed, this.cursor)
+    this.view.draw(this.world, this.selectedId, this.armed, this.cursor, {
+      paths: this.lastPaths,
+      forces: this.showForces ? this.forcesOnSelection() : [],
+    })
     this.renderInvariants(this.tracker.sample(this.world))
 
     if (this.world.escaped.size > 0 && !this.reportedEscape) {
@@ -175,6 +219,9 @@ export class SandboxMode {
   }
 
   private reportedEscape = false
+  /** Paths supplied by the caller each frame, so the timeline stays in one place. */
+  lastPaths: Record<string, { x: number; y: number }[]> = {}
+  showForces = true
 
   // --- interaction --------------------------------------------------------
 

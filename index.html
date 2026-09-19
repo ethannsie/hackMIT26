@@ -80,6 +80,18 @@
       main { position: relative; overflow: hidden; min-width: 0; }
       #stage { width: 100%; height: 100%; display: block; cursor: crosshair; }
 
+      #scrub-bar {
+        position: absolute; left: 0; right: 0; bottom: 0;
+        display: flex; align-items: center; gap: 10px;
+        padding: 7px 14px; background: linear-gradient(transparent, rgba(11,13,17,.92) 40%);
+        font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace;
+      }
+      #scrub-bar.with-drawer { bottom: min(46vh, 420px); }
+      #scrub { flex: 1; accent-color: var(--accent); min-width: 0; }
+      #scrub:disabled { opacity: .35; }
+      #scrub-time { min-width: 52px; }
+      #scrub-hint { color: var(--muted); white-space: nowrap; }
+
       #charts-drawer {
         position: absolute; left: 0; right: 0; bottom: 0;
         height: min(46vh, 420px); min-height: 250px;
@@ -212,7 +224,7 @@
       <button id="step" class="icon-btn" title="Advance one step (.)">▸|</button>
       <button id="reset" class="icon-btn" title="Reset (R)">↺</button>
       <button id="undo" class="icon-btn" title="Roll back (Ctrl/Cmd+Z)" disabled>↶</button>
-      <select id="history" title="Restore an earlier state" disabled></select>
+      <select id="history" title="Restore an earlier scene state" disabled></select>
       <select id="speed" title="Simulation speed">
         <option value="0.25">0.25×</option>
         <option value="0.5">0.5×</option>
@@ -228,6 +240,12 @@
 
     <main>
       <canvas id="stage"></canvas>
+
+      <div id="scrub-bar">
+        <span id="scrub-time">0.00 s</span>
+        <input id="scrub" type="range" min="0" max="0" value="0" step="1" disabled />
+        <span id="scrub-hint">press space to pause, then scrub</span>
+      </div>
       <section id="charts-drawer" hidden>
         <div class="drawer-head">
           <span>Motion graphs</span>
@@ -258,6 +276,8 @@
               <dt>.</dt><dd>Advance one step</dd>
               <dt>R</dt><dd>Reset</dd>
               <dt>G</dt><dd>Motion graphs</dd>
+              <dt>V</dt><dd>Free-body diagram</dd>
+              <dt>← →</dt><dd>Step through history</dd>
               <dt>?</dt><dd>This help</dd>
               <dt>Ctrl/⌘ Z</dt><dd>Roll back</dd>
               <dt>Esc</dt><dd>Close / deselect</dd>
@@ -266,6 +286,7 @@
           <div>
             <h3>Problem mode</h3>
             <dl>
+              <dt>Click</dt><dd>Select a body to track</dd>
               <dt>Drag</dt><dd>Push a body</dd>
               <dt>Shift</dt><dd>Hold to grab, release to throw</dd>
             </dl>

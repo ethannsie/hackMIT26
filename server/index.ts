@@ -5,9 +5,17 @@
  * proxies /api here (see vite.config.ts), so the front end only ever talks to
  * localhost and never holds a credential.
  *
- * Per the plan's failure ladder (§12), this is rung 3 — the hosted-API path.
- * When the GX10 is up, point EXTRACT_LOCAL_URL at it and this falls back to
- * OpenAI on a 2 second timeout, so a stalled GX10 can never freeze a demo.
+ * Per the plan's failure ladder (§12), the hosted-API path is rung 3. The
+ * on-device GX10 (rung 1) is tried first: it runs Ollama, whose OpenAI-compatible
+ * endpoint takes the exact same prompt and strict schema, so the two backends
+ * differ only in base URL, model name and how long we are willing to wait.
+ *
+ * Measured on the GX10 (Sat 19 Sep): qwen3.8 (27B, vision) returns a full
+ * 538-token spec in ~30 s at ~18 tok/s. That is why EXTRACT_LOCAL_TIMEOUT_MS
+ * defaults to 45 s rather than the 2 s the plan originally assumed — a 2 s
+ * timeout would fall through to OpenAI on every single photo and the GX10
+ * would never do any work. A stalled GX10 still cannot freeze a demo: the
+ * timeout fires, we fall back, and the UI shows which backend answered.
  */
 import 'dotenv/config'
 import express from 'express'
@@ -18,8 +26,11 @@ import { SYSTEM_PROMPT, USER_PROMPT } from './prompt.ts'
 
 const PORT = Number(process.env['API_PORT'] ?? 8787)
 const MODEL = process.env['OPENAI_MODEL'] ?? 'gpt-4o'
-const LOCAL_URL = process.env['EXTRACT_LOCAL_URL'] // optional GX10 endpoint
-const LOCAL_TIMEOUT_MS = 2000
+// Optional on-device backend: an OpenAI-compatible base URL, e.g. the GX10's
+// Ollama at http://localhost:11434/v1 (see gx10/README.md).
+const LOCAL_URL = process.env['EXTRACT_LOCAL_URL']
+const LOCAL_MODEL = process.env['EXTRACT_LOCAL_MODEL'] ?? 'qwen3.8'
+const LOCAL_TIMEOUT_MS = Number(process.env['EXTRACT_LOCAL_TIMEOUT_MS'] ?? 45_000)
 
 const app = express()
 // Base64 data URLs are bulky even after compression; 12 MB is ample headroom.
@@ -27,6 +38,8 @@ app.use(express.json({ limit: '12mb' }))
 
 const apiKey = process.env['OPENAI_API_KEY']
 const openai = apiKey ? new OpenAI({ apiKey }) : null
+// Ollama ignores the key but the SDK insists on one.
+const local = LOCAL_URL ? new OpenAI({ baseURL: LOCAL_URL, apiKey: 'ollama' }) : null
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -34,27 +47,47 @@ app.get('/api/health', (_req, res) => {
     model: MODEL,
     openai_key_present: Boolean(apiKey),
     local_endpoint: LOCAL_URL ?? null,
+    local_model: LOCAL_URL ? LOCAL_MODEL : null,
+    local_timeout_ms: LOCAL_URL ? LOCAL_TIMEOUT_MS : null,
   })
 })
 
-/** Try the on-device GX10 first, but never wait on it. */
-async function tryLocal(dataUrl: string): Promise<unknown | null> {
-  if (!LOCAL_URL) return null
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), LOCAL_TIMEOUT_MS)
+/** The one request shape both backends accept. */
+function extractionRequest(image: string) {
+  return {
+    // Deterministic extraction: same photo should give the same spec.
+    temperature: 0,
+    response_format: RESPONSE_FORMAT,
+    messages: [
+      { role: 'system' as const, content: SYSTEM_PROMPT },
+      {
+        role: 'user' as const,
+        content: [
+          { type: 'text' as const, text: USER_PROMPT },
+          // 'high' detail: these are printed textbook pages and the numbers
+          // are small. Low detail loses decimal points and exponents.
+          { type: 'image_url' as const, image_url: { url: image, detail: 'high' as const } },
+        ],
+      },
+    ],
+  }
+}
+
+/** Try the on-device GX10 first, but never wait on it past the timeout. */
+async function tryLocal(image: string): Promise<unknown | null> {
+  if (!local) return null
   try {
-    const r = await fetch(LOCAL_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ image: dataUrl }),
-      signal: controller.signal,
-    })
-    if (!r.ok) return null
-    return await r.json()
-  } catch {
-    return null // timeout, refused, malformed — fall through to the hosted API
-  } finally {
-    clearTimeout(timer)
+    const completion = await local.chat.completions.create(
+      { model: LOCAL_MODEL, ...extractionRequest(image) },
+      { timeout: LOCAL_TIMEOUT_MS, maxRetries: 0 },
+    )
+    const text = completion.choices[0]?.message?.content
+    return text ? (JSON.parse(text) as unknown) : null
+  } catch (err) {
+    // Timeout, refused, model not loaded, malformed JSON: fall through to the
+    // hosted API. Log it so a silently-dead GX10 is visible in the api pane.
+    console.warn(`local extraction failed, falling back: ${(err as Error).message}`)
+    return null
   }
 }
 
@@ -81,21 +114,7 @@ app.post('/api/extract', async (req, res) => {
     try {
       const completion = await openai.chat.completions.create({
         model: MODEL,
-        // Deterministic extraction: same photo should give the same spec.
-        temperature: 0,
-        response_format: RESPONSE_FORMAT,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: USER_PROMPT },
-              // 'high' detail: these are printed textbook pages and the numbers
-              // are small. Low detail loses decimal points and exponents.
-              { type: 'image_url', image_url: { url: image, detail: 'high' } },
-            ],
-          },
-        ],
+        ...extractionRequest(image),
       })
       const text = completion.choices[0]?.message?.content
       if (!text) throw new Error('model returned an empty response')
@@ -119,5 +138,5 @@ app.listen(PORT, () => {
   console.log(`extract API on http://localhost:${PORT}`)
   console.log(`  model            ${MODEL}`)
   console.log(`  OPENAI_API_KEY   ${apiKey ? 'present' : 'MISSING — see .env.example'}`)
-  console.log(`  local endpoint   ${LOCAL_URL ?? 'none (set EXTRACT_LOCAL_URL for the GX10)'}`)
+  console.log(`  local endpoint   ${LOCAL_URL ? `${LOCAL_URL} (${LOCAL_MODEL}, ${LOCAL_TIMEOUT_MS} ms)` : 'none (set EXTRACT_LOCAL_URL for the GX10)'}`)
 })

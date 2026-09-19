@@ -252,7 +252,7 @@ Render a contact glow or a shadow where fingertips cross the plane, so depth rea
 | BNO055 9-DOF | Hand or ramp orientation, absolute, no drift | P1 | **Have.** Adafruit board |
 | ESP32-WROOM-32 | Reads sensors, streams to browser over USB serial | P0 | **Get from desk** (7 left at last check). ESP32-S3-DevKitC as spare (166 left) |
 | Mini breadboard + jumpers | Wiring | P0 | **Have.** Plus WAGO 221s for a 3V3/GND power bus |
-| Micro-USB data cable | ESP-WROOM-32 → laptop | P0 | **Have.** Use with USB-C-to-A adapters |
+| Micro-USB data cable | ESP-WROOM-32 → GX10 (or laptop) | P0 | **Have.** Use with USB-C-to-A adapters |
 | Coin vibration motor + MOSFET PWM module | Buzz on plane contact (haptic bonus) | P2 | Motors **have**; MOSFET module still to grab. DRV2605L is out |
 | ~~VL53L7CX 8×8 ToF~~ | ~~Upgrade: 64 depth zones~~ | ~~P2~~ | **Gone from inventory. Dropped.** See "Lateral coverage" below |
 
@@ -316,7 +316,51 @@ Two jobs, not one. If it only fires at photo ingest, the ASUS story is thin.
 
 Then the entire loop is on-device and we can say so honestly.
 
-Connection: Cat6 straight to the laptop, one local HTTP endpoint. Hit local first, fall back to the hosted API on a **2 second timeout**. A GX10 stall must never freeze a live demo.
+### What it is
+
+ASUS's build of the NVIDIA DGX Spark: GB10 Grace Blackwell, 128 GB unified memory, **ARM64**, 10GbE + Wi-Fi 7, HDMI 2.1, USB-C. Ships with DGX OS (Ubuntu 24.04) with CUDA, Docker + NVIDIA Container Toolkit and Ollama preinstalled. It is a Linux desktop, not an appliance.
+
+### Deployment: run the whole demo on it (recommended)
+
+The browser app is a static page. Nothing forces it onto a laptop. Run Chromium on the GX10 itself:
+
+- **7 in. HDMI touchscreen** → GX10 HDMI. This is the sim canvas at hand height.
+- **Webcam** → GX10 USB.
+- **ESP32** → GX10 USB. Chromium on Linux supports WebSerial; the user needs to be in the `dialout` group (`sudo usermod -aG dialout $USER`, re-login).
+- **Ollama** at `http://localhost:11434`. No Cat6, no laptop Ethernet adapter, no cross-machine latency.
+
+Laptops stay dev machines: edit, push, `git pull` on the GX10, reload. Keep the app host-agnostic (base URL in one config constant) so a laptop can run the demo if the box dies.
+
+Fallback deployment: laptop runs the browser, GX10 is only the inference endpoint over the network. Still hit local first, hosted API on a **2 second timeout**. A GX10 stall must never freeze a live demo.
+
+### First boot (we have display + keyboard + mouse, so not headless)
+
+1. HDMI → 7 in. display, USB keyboard + mouse, power. It boots the moment power is applied. **No LED, no beep** — fan noise is the only sign of life. Do not press power again.
+2. The wizard needs Wi-Fi to finish account creation and pull a multi-GB OS update. Venue Wi-Fi with a captive portal or 802.1X login will not work in the wizard — **use a phone hotspot**, then switch to venue Wi-Fi later over SSH with `nmcli dev wifi connect "<SSID>" password "<pw>"`.
+3. Wizard: language/timezone → EULA → **user `hackmit`, shared team password** (this is the SSH login; tape it to the box) → analytics (skip) → Wi-Fi.
+4. Update + reboots take up to ~10 min with no feedback. **Do not cut power.**
+5. Headless fallback if the display path fails: on first boot only, the box broadcasts a Wi-Fi hotspot `spark-xxxx` (SSID + password on the sticker on the Quick Start card). Join it, open `http://spark-xxxx.local`, same wizard. Photograph the sticker — the hotspot never comes back after setup.
+
+### After first boot
+
+```bash
+sudo systemctl enable --now ssh            # SSH from laptops: ssh hackmit@<hostname>.local
+sudo usermod -aG dialout $USER             # WebSerial to the ESP32
+sudo systemctl mask sleep.target suspend.target hibernate.target   # never sleep mid-demo
+# Settings → Power → Screen blank: never
+which ollama || curl -fsSL https://ollama.com/install.sh | sh
+sudo systemctl edit ollama                 # add: [Service] / Environment="OLLAMA_HOST=0.0.0.0"
+sudo systemctl restart ollama
+```
+
+Models (pull on venue Wi-Fi or a wired jack, not phone data):
+
+- **Ingest:** `ollama pull qwen3-vl:32b` (~20 GB) — vision, good at strict JSON. Fits trivially in 128 GB.
+- **Live queries:** `ollama pull qwen3:8b` (~5 GB) — fast enough to answer while the user is interacting.
+
+Smoke test: `curl http://localhost:11434/api/tags`. Ollama also serves an OpenAI-compatible API at `/v1/chat/completions`, so local vs hosted is one base-URL swap.
+
+ARM64 + Blackwell (`sm_121`) gotcha: anything past Ollama (vLLM, PyTorch) must come from NVIDIA NGC containers `26.01+`. Random pip wheels will not have the right CUDA arch.
 
 ---
 
@@ -328,17 +372,19 @@ Connection: Cat6 straight to the laptop, one local HTTP endpoint. Hit local firs
 
 ### From the HackMIT hub — actually received (Sat 19 Sep, table 55)
 
-Most of the inventory was taken within minutes. This is what we hold:
+Most of the inventory was taken within minutes. This is what we hold, re-counted Sat afternoon after the second pickup:
 
-- **Sensors:** VL53L1X ×3 orders (2-packs), Adafruit BNO055 ×1, HC-SR04 ×5 (unused), Arducam Mini ×1 (unused), HuskyLens ×1 (unused)
 - **Compute:** ASUS Ascent GX10 ×1, Arduino UNO Q 4GB ×1 (not usable as WebSerial MCU, see §8)
-- **Displays:** ASUS ZenScreen ×1, wisecoco 7 in. HDMI IPS touchscreen ×1, UGREEN micro-HDMI→HDMI ×1
+- **Sensors:** VL53L1X ×3 packages (2-packs → up to 6 units), Adafruit BNO055 ×1 (*confirm still in hand — not in the afternoon recount*), HC-SR04 ×5 (unused), Arducam Mini ×1 (unused), HuskyLens ×1 (unused)
+- **Displays:** wisecoco 7 in. HDMI IPS touchscreen ×1 (**the sim canvas** — plugs into the GX10, see §9), UGREEN micro-HDMI→HDMI ×1, ASUS ZenScreen ×1 (*confirm still in hand*)
 - **Wiring/power:** mini breadboards, jumper wires (50+ assorted), WAGO 221 lever nuts, Arduino USB-C cable, micro-USB data cable, USB-C-to-A adapters, COOLM 5 V 4 A supply, electrical tape, velcro
-- **Peripherals:** USB webcam ×1, wired keyboard, mice, Neoteck multimeter
-- **Extras:** MG996R servos, SG90 servos, coin vibration motors (haptics bonus)
+- **Tools:** Neoteck multimeter, **soldering iron** (headers for the L1X/BNO055 — still use the staffed hot-work bench, see Notes)
+- **Peripherals:** Logitech C270 HD webcam ×1, wired keyboard, mouse — these three double as the GX10 first-boot kit
+- **Extras, probably unused:** MG996R + SG90 servos, buzzers, coin vibration motors (haptics bonus only)
 
-**Still to get:** ESP-WROOM-32 (P0, 7 left) + ESP32-S3-DevKitC spare; MOSFET PWM switch module if we do haptics.
-**Out of stock, worked around:** powered USB hub (laptop only needs webcam + ESP32 — two adapters), Qwiic cables (jumpers, keep the IMU lead < 30 cm), DRV2605L (MOSFET module instead), VL53L7CX (dropped, see §8).
+**Still to get:** ESP-WROOM-32 (P0, 7 left at last check) + ESP32-S3-DevKitC spare; MOSFET PWM switch module only if we do haptics.
+**Out of stock, worked around:** powered USB hub (GX10 has enough USB for webcam + ESP32), Qwiic cables (jumpers, keep the IMU lead < 30 cm), DRV2605L (MOSFET module instead), VL53L7CX (dropped, see §8).
+**No longer needed:** Cat6 to the laptop and a laptop Ethernet adapter — the demo runs on the GX10 (§9).
 
 ### Bring ourselves
 - Laptops and chargers
@@ -349,7 +395,7 @@ Most of the inventory was taken within minutes. This is what we hold:
 ### Notes
 - **There is no projector in the 2026 inventory.** Table projection is off unless someone brought one.
 - Power strips are deployed by HackMIT staff only. Ask at your table, don't bring your own.
-- Soldering is restricted to the staffed hot-work bench with safety glasses.
+- Soldering is restricted to the staffed hot-work bench with safety glasses. We hold an iron from the hub; still do the header work at the bench.
 
 ---
 
@@ -379,7 +425,7 @@ Decide the floor now, not at 4 AM.
 
 1. Full stack: photo → GX10 → sim → ToF-fused 3D hand → live derivation
 2. No ToF: MediaPipe 2D hand only, depth threshold faked from hand size
-3. No GX10: hosted API, same pipeline
+3. No GX10: laptop runs the browser, hosted API for inference, same pipeline
 4. No photo ingest: manual problem-type picker with sliders, sim still works
 5. Floor: Tier 0, one problem type, hand pushing a ball
 
@@ -457,9 +503,9 @@ Practically: list MediaPipe, Matter.js, three.js, KaTeX and any sensor libraries
 
 ## 18. Open questions
 
-- Which ToF part is physically in hand right now
 - Whether the BNO055 goes on the hand (orientation, torque demos) or the ramp (tilt control). Hand is the better demo; ramp is the easier build.
-- Whether the portable monitor is available or already claimed
+- Whether the BNO055 and ZenScreen are still physically in hand (missing from the Sat afternoon recount)
+- Whether Chromium on the GX10 gets GPU-accelerated WebGL for three.js + MediaPipe, or we are on the WASM/CPU path. Test in hour 1.
 - Confirm 2026 tracks and challenge list at the opening ceremony; everything above assumes 2025 repeats
 
 ---

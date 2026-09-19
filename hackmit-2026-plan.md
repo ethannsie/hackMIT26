@@ -246,13 +246,32 @@ Render a contact glow or a shadow where fingertips cross the plane, so depth rea
 
 ### Parts
 
-| Part | Role | Priority |
-|---|---|---|
-| VL53L1X ToF | Palm depth, metric, up to ~50 Hz | P0 |
-| BNO055 9-DOF | Hand or ramp orientation, absolute, no drift | P1 |
-| ESP32-WROOM-32 | Reads sensors, streams to browser | P0 |
-| Mini breadboard + jumpers | Wiring | P0 |
-| VL53L7CX 8×8 ToF | Upgrade: 64 depth zones, survives lateral hand motion | P2 |
+| Part | Role | Priority | Status (Sat 19 Sep) |
+|---|---|---|---|
+| VL53L1X ToF | Palm depth, metric, up to ~50 Hz | P0 | **Have.** 3 DWEII orders, each a 2-pack → up to 6 units |
+| BNO055 9-DOF | Hand or ramp orientation, absolute, no drift | P1 | **Have.** Adafruit board |
+| ESP32-WROOM-32 | Reads sensors, streams to browser over USB serial | P0 | **Get from desk** (7 left at last check). ESP32-S3-DevKitC as spare (166 left) |
+| Mini breadboard + jumpers | Wiring | P0 | **Have.** Plus WAGO 221s for a 3V3/GND power bus |
+| Micro-USB data cable | ESP-WROOM-32 → laptop | P0 | **Have.** Use with USB-C-to-A adapters |
+| Coin vibration motor + MOSFET PWM module | Buzz on plane contact (haptic bonus) | P2 | Motors **have**; MOSFET module still to grab. DRV2605L is out |
+| ~~VL53L7CX 8×8 ToF~~ | ~~Upgrade: 64 depth zones~~ | ~~P2~~ | **Gone from inventory. Dropped.** See "Lateral coverage" below |
+
+**Do not substitute the RPLIDAR C1 for the L7CX.** It is a spinning single-plane 360° scanner at ~10 Hz: the hand only registers while it crosses that plane, so it is worse than the L1X on exactly the axis a hand moves when reaching into the sim. Wrong geometry, wrong rate, and a UART protocol we have not budgeted for.
+
+**Do not use the Arduino UNO Q as the sensor MCU.** Its USB-C is wired to the Linux MPU, not the microcontroller; the MCU's `Serial` goes out the D0/D1 header pins and the only USB path is `Monitor` via App Lab's Bridge — not a COM port WebSerial can open. It stays in the box unless we are desperate, in which case the path is MCU sketch → Bridge → Python WebSocket on its Linux side → browser over a laptop hotspot.
+
+### Lateral coverage without the L7CX
+
+The L7CX was only there to keep depth valid when the hand drifts out of the L1X's ~27° cone. Cover that in software plus spare sensors:
+
+1. Mount the L1X on the webcam so its cone is the centre of the frame.
+2. Use MediaPipe's normalized palm x,y to know whether the palm is inside the cone. Inside → trust ToF. Outside → hold last good depth, or use the size estimate below.
+3. Free fallback: `worldLandmarks` gives metric hand size, `landmarks` gives pixel size; ratio × focal length ≈ distance anywhere in frame. Rougher than ToF, but it fills the gaps.
+4. If that is not enough, wire a second L1X beside the first (separate XSHUT pins → distinct I²C addresses, same driver) for a wider cone.
+
+### Headers must be soldered first
+
+The DWEII L1X boards and the Adafruit BNO055 ship with the pin header **loose in the bag**. Nothing can be wired until ~6 pins per board are soldered at the restricted hot-work bench. Do this the moment the ESP32 is in hand — there will be a queue later. WAGOs cannot replace this: they clamp wire ends, not board holes. Friction-fitting the pins works until someone bumps the table and then I²C fails silently.
 
 ### The I2C trap
 
@@ -307,18 +326,19 @@ Connection: Cat6 straight to the laptop, one local HTTP endpoint. Hit local firs
 - ZenScreen MB169CK-P ×1 — sim canvas at hand height
 - Ascent GX10 ×1 — local inference
 
-### From the HackMIT hub
-- USB webcams ×2 (one spare)
-- Powered 7-port USB 3.0 hub ×1
-- USB-C cables ×3, USB-C to USB-A adapters ×3
-- Cat6 Ethernet cable ×1
-- HDMI + micro-HDMI cables, active HDMI-to-USB-C adapter
-- Wired USB keyboard + mouse (GX10 first boot)
-- Portable 15.6 in. 1080p monitor ×1 — derivation panel facing the judge
-- USB power bank 10,000 mAh 30 W (restricted) — ZenScreen power
-- Foam board ×2 — matte backdrop behind the hand zone, big tracking accuracy win
-- Gaffer tape, zip ties
-- VL53L1X, BNO055, ESP32, breadboard, jumper wires
+### From the HackMIT hub — actually received (Sat 19 Sep, table 55)
+
+Most of the inventory was taken within minutes. This is what we hold:
+
+- **Sensors:** VL53L1X ×3 orders (2-packs), Adafruit BNO055 ×1, HC-SR04 ×5 (unused), Arducam Mini ×1 (unused), HuskyLens ×1 (unused)
+- **Compute:** ASUS Ascent GX10 ×1, Arduino UNO Q 4GB ×1 (not usable as WebSerial MCU, see §8)
+- **Displays:** ASUS ZenScreen ×1, wisecoco 7 in. HDMI IPS touchscreen ×1, UGREEN micro-HDMI→HDMI ×1
+- **Wiring/power:** mini breadboards, jumper wires (50+ assorted), WAGO 221 lever nuts, Arduino USB-C cable, micro-USB data cable, USB-C-to-A adapters, COOLM 5 V 4 A supply, electrical tape, velcro
+- **Peripherals:** USB webcam ×1, wired keyboard, mice, Neoteck multimeter
+- **Extras:** MG996R servos, SG90 servos, coin vibration motors (haptics bonus)
+
+**Still to get:** ESP-WROOM-32 (P0, 7 left) + ESP32-S3-DevKitC spare; MOSFET PWM switch module if we do haptics.
+**Out of stock, worked around:** powered USB hub (laptop only needs webcam + ESP32 — two adapters), Qwiic cables (jumpers, keep the IMU lead < 30 cm), DRV2605L (MOSFET module instead), VL53L7CX (dropped, see §8).
 
 ### Bring ourselves
 - Laptops and chargers

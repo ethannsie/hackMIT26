@@ -183,6 +183,25 @@ console.log('\nPENDULUM  L = 1.0 m, theta0 = 10 deg (small angle)')
 }
 
 // ---------------------------------------------------------------------------
+console.log('\nPENDULUM  amplitude must not decay — nothing in this scene damps it')
+for (const theta0 of [10, 40]) {
+  const s = spec('pendulum', { length_m: 1.2, theta0_deg: theta0, mass_kg: 1 })
+  const w = new SimWorld(s)
+  const pivotY = w.bodyById('pivot')!.position.y
+
+  // Peak angle reached in the final 10 s of a 30 s run.
+  let latePeak = 0
+  for (let i = 0; i < 3600; i++) {
+    w.step()
+    if (i < 2400) continue
+    const bob = w.bodyById('bob')!
+    const ang = Math.atan2(bob.position.x, bob.position.y - pivotY) * (180 / Math.PI)
+    latePeak = Math.max(latePeak, Math.abs(ang))
+  }
+  check(`amplitude after 30 s, released ${theta0}° (°)`, latePeak, theta0, 2, '(undamped: must not decay)')
+}
+
+// ---------------------------------------------------------------------------
 console.log('\n1D COLLISION  m1 = 1 kg @ 2 m/s into m2 = 1 kg at rest, e = 1 (elastic)')
 {
   const s = spec('collision_1d', { m1_kg: 1, m2_kg: 1, v1_ms: 2, v2_ms: 0, restitution: 1 })

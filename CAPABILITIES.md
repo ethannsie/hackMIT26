@@ -2,6 +2,11 @@
 
 What this system can simulate, what it refuses, and how accurate it is.
 
+Two modes. **Problem mode** solves a specific problem and shows its derivation.
+**Sandbox mode** lets components be placed together and interact. They share the
+solver and the determinism guarantees; they differ in what the side panel can
+honestly claim, which is the whole design tension — see [Sandbox mode](#sandbox-mode).
+
 Everything in the accuracy column is measured by `npm run verify`, which runs
 the engine against independent closed-form solutions. It is not an estimate.
 
@@ -293,6 +298,105 @@ the student's, the system says so.
   with radius, so very long runs will drift — physically correct, but the
   comparison against a closed form stops being meaningful once the particle is
   far from the axis.
+
+---
+
+## Sandbox mode
+
+Open with the mode dropdown, or go straight to `#sandbox` in the URL.
+
+Place components, wire them into each other, change any quantity, and watch what
+happens. The starter scene is the chain from the plan: a box slides down a ramp,
+hits a pendulum, which knocks a ball into a wall.
+
+### Components
+
+| Component | Editable | Notes |
+|---|---|---|
+| **Ball** | mass, radius, bounciness, friction, charge, initial velocity | Give it charge and it curves inside a magnetic field |
+| **Box** | mass, width, height, angle, bounciness, friction, charge, initial velocity | Slides and tumbles |
+| **Ramp** | angle, length, friction μ | Static |
+| **Wall** | width, height, angle, bounciness, friction | Static |
+| **Pendulum** | rod length, bob mass, bob radius, start angle | Rigid rod, integrated as 1-DOF; things can knock it |
+| **Spring** | stiffness k (N/m), mass, rest length, start stretch, bob radius | Real k, so T = 2π√(m/k) actually holds |
+| **Magnetic field** | width, height, B (signed) | A region; charged bodies inside curve, speed never changes |
+
+### Editing
+
+| Action | Effect |
+|---|---|
+| Click a palette chip, then the canvas | place a component |
+| Click a component | select and open its inspector |
+| Drag while paused | move its authored position |
+| Drag while running | grab it; release throws at the drag velocity |
+| Delete / Backspace | remove the selection |
+| Esc | cancel placement or deselect |
+
+**The scene spec is the authored initial state, and the world is rebuilt from it
+on every edit.** Nothing mutates a running simulation. So any scene replays
+exactly, a slider change is reproducible, and Reset returns to something real
+rather than to wherever the bodies happened to drift.
+
+### What the panel shows, and why it is different
+
+Problem mode shows the closed-form answer and the sim agrees with it to under
+1%. **In a composed scene no closed form exists** — a block sliding into a
+pendulum into a spring has no textbook answer to check against.
+
+So sandbox shows the things that hold for *any* arrangement: total energy,
+linear momentum, angular momentum about the origin.
+
+The important half is that it states which laws **this scene is allowed to
+conserve**, and names the components responsible when it is not:
+
+> **Total energy** — not expected here
+> 51.672 J from 52.071
+> - `ramp_1` has friction μ = 0.05
+> - `box_1` has bounciness 0.35 — collisions lose energy
+
+A panel reporting "energy drifting 4%" without saying "because you set friction
+to 0.3" would be teaching the wrong lesson. When a scene *is* conservative, the
+panel says the law holds — and that number is then a real measurement of solver
+quality, not decoration.
+
+### Measuring drift honestly
+
+Drift is reported against the energy **actually in play**: the largest kinetic
+plus spring energy seen, and the span of height actually used.
+
+Not against the raw total, which is meaningless — gravitational potential energy
+is measured from an arbitrary zero, so a pendulum hanging 4 m above the origin
+carries ~30 J of offset unrelated to its 2.8 J swing. Dividing by that hides
+real drift behind a large denominator. It is what made a pendulum losing **76%
+of its swing** read as a comfortable "7%".
+
+### Sandbox accuracy
+
+`npm run verify:sandbox` — 14 checks, all passing.
+
+| Check | Result |
+|---|---|
+| Isolated spring matches T = 2π√(m/k) | 0.53% |
+| Conservative scene holds energy over 20 s | worst drift 1.96% |
+| Friction scene correctly reported as non-conserving | names 7 reasons |
+| Energy falls, never rises, when friction is present | holds |
+| Neutral ball is unaffected by a field | 0.00% |
+| Charged ball deflects | y 1.60 → 2.21 m |
+| Field does no work on the charged ball | 0.00% speed change |
+| Composed scene replays bit-identically | holds |
+
+### Limits
+
+- Springs are one-dimensional between an anchor and a bob. No spring between two
+  free bodies yet.
+- One magnetic field acts on a body at a time; overlapping regions are not
+  modelled.
+- No electric fields, no ropes or pulleys, no motors, no joints between movable
+  bodies.
+- Sandbox has no derivation panel and no photo ingest. It is a place to build,
+  not a place to be given an answer.
+- Hand tracking is not wired into sandbox yet. The coupling is already
+  generalised to accept either world, so it is a small change when needed.
 
 ---
 

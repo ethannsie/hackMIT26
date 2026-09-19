@@ -150,21 +150,13 @@ function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): BuiltScene {
   })
   Body.setMass(bob, p.mass_kg)
 
-  // A rigid rod, not a spring. stiffness 1 + damping 0 + the engine's raised
-  // constraintIterations is what keeps the measured period honest.
-  const rod = Constraint.create({
-    bodyA: pivot,
-    bodyB: bob,
-    length: L,
-    stiffness: 1,
-    damping: 0,
-    label: 'rod',
-  })
-
+  // No Matter Constraint. It holds the rod's LENGTH but bleeds its ENERGY:
+  // reading its velocity back each step decayed a 40° release to 18° in 30 s.
+  // The rod is integrated in corrections.ts instead, and drawn by the renderer.
   const g = ground()
   return {
     bodies: [g, pivot, bob],
-    constraints: [rod],
+    constraints: [],
     byId: { ground: g, pivot, bob },
     focusId: 'bob',
     interactableIds: ['bob'],

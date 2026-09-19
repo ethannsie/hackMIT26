@@ -325,6 +325,20 @@ export class CanvasView {
         break
       }
 
+      case 'pendulum': {
+        // The rod is integrated, not a Matter constraint, so the generic
+        // constraint pass has nothing to draw. Draw it here.
+        const pivot = world.bodyById('pivot')
+        if (!pivot) break
+        ctx.strokeStyle = COLORS.dim
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(this.sx(pivot.position.x), this.sy(pivot.position.y))
+        ctx.lineTo(fx, fy)
+        ctx.stroke()
+        break
+      }
+
       default:
         break
     }

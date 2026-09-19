@@ -33,6 +33,8 @@ const FORCE_N_TO_MATTER = PX_PER_M / 1e6
 export interface Corrections {
   /** Runs immediately before each Engine.update. */
   preStep(): void
+  /** Runs immediately after each Engine.update. */
+  postStep?(): void
   /** Detaches event listeners, so reset() does not leak them. */
   dispose(): void
 }
@@ -366,6 +368,66 @@ function rotatingFrameForces(
   }
 }
 
+/**
+ * The pendulum, integrated as the one-degree-of-freedom system it is.
+ *
+ * Matter's Constraint conserves the rod's LENGTH but not its energy. Left to it,
+ * a pendulum released from 40° decays to 18° in 30 s, and even a 10° release
+ * falls to 4.9° — with no damping anywhere in the scene. The period check passes
+ * anyway because it only measures the first two swings; watch the thing for
+ * thirty seconds at a demo table and it is unmistakable.
+ *
+ * So the angle is integrated directly:
+ *
+ *     omega += -(g/L)·sin(theta)·dt
+ *     theta += omega·dt
+ *
+ * Semi-implicit Euler is symplectic: energy oscillates within a bound rather
+ * than draining, however long it runs. Matter's gravity on the bob is cancelled
+ * so it is not applied twice, and any velocity a collision imparts is projected
+ * onto the tangent and folded back into omega, so the bob can still be hit.
+ */
+function pendulumDynamics(
+  engine: Matter.Engine,
+  scene: BuiltScene,
+  p: Extract<SimParams, { kind: 'pendulum' }>,
+): Corrections {
+  const bob = scene.byId['bob']
+  const pivot = scene.byId['pivot']
+  if (!bob || !pivot) return NONE
+
+  const L_m = p.length_m
+  const L = mToPx(L_m)
+  let theta = p.theta0_deg * DEG
+  let omega = 0
+
+  return {
+    preStep(): void {
+      // Matter adds mass·gravity.y to force each step; subtract exactly that.
+      Body.applyForce(bob, bob.position, { x: 0, y: -bob.mass * engine.gravity.y })
+    },
+    postStep(): void {
+      // Keep only the motion the rod allows: along the tangent.
+      const tx = Math.cos(theta)
+      const ty = -Math.sin(theta)
+      const vt =
+        matterVelToMs(bob.velocity.x) * tx + -matterVelToMs(bob.velocity.y) * -ty
+      omega = vt / L_m
+
+      omega += -(p.g / L_m) * Math.sin(theta) * FIXED_DT_S
+      theta += omega * FIXED_DT_S
+
+      Body.setPosition(bob, {
+        x: pivot.position.x + Math.sin(theta) * L,
+        y: pivot.position.y + Math.cos(theta) * L,
+      })
+      const speed = msToMatterVel(omega * L_m)
+      Body.setVelocity(bob, { x: Math.cos(theta) * speed, y: -Math.sin(theta) * speed })
+    },
+    dispose(): void {},
+  }
+}
+
 export function installCorrections(
   engine: Matter.Engine,
   scene: BuiltScene,
@@ -384,12 +446,13 @@ export function installCorrections(
       return uniformCircularMotion(scene, params)
     case 'rotating_frame':
       return rotatingFrameForces(scene, params)
-
-    // Projectile is drag-free ballistics and the pendulum rod already tracks
-    // T = 2*pi*sqrt(L/g) to 0.1%. The angular-momentum particle is genuinely
-    // force-free: its whole point is that L is constant with nothing acting.
-    case 'projectile':
     case 'pendulum':
+      return pendulumDynamics(engine, scene, params)
+
+    // Projectile is drag-free ballistics. The angular-momentum particle is
+    // genuinely force-free: its whole point is that L is constant with nothing
+    // acting on it. Matter handles both correctly on its own.
+    case 'projectile':
     case 'angular_momentum_point':
       return NONE
   }

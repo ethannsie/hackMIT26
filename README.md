@@ -20,9 +20,13 @@ npm run dev               # web app on :5173, extract API on :8787
 Two other commands matter:
 
 ```bash
-npm run verify            # check the physics engine against the closed forms
+npm run verify            # problem library, against the closed forms
+npm run verify:sandbox    # sandbox, against the conservation laws
+npm run verify:all        # both
 npm run check             # typecheck
 ```
+
+Open `#sandbox` in the URL to go straight into sandbox mode.
 
 **Run `npm run verify` before every push.** 39 checks, worst case 0.58%. It is
 the only thing standing between us and demoing wrong physics to a judge.

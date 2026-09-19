@@ -150,6 +150,7 @@ export class SimWorld {
 
     this.corrections.preStep()
     Engine.update(this.engine, FIXED_DT_MS)
+    this.corrections.postStep?.()
     this.steps += 1
   }
 

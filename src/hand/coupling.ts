@@ -12,7 +12,8 @@
  * attaches it to the palm, and releasing throws it at the measured palm
  * velocity. That is where the projectile demo's launch speed comes from.
  */
-import type { SimWorld, AppliedForce } from '../sim/world.ts'
+import type Matter from 'matter-js'
+import type { AppliedForce } from '../sim/world.ts'
 import { pxToM } from '../sim/units.ts'
 import { PINCH_GRAB, PINCH_RELEASE, type HandFrame } from './types.ts'
 
@@ -22,6 +23,19 @@ export const PUSH_STIFFNESS_N_PER_M = 400
 export const MAX_PUSH_N = 60
 /** How close the palm must be to a body's centre to grab it, in metres. */
 export const GRAB_RADIUS_M = 0.12
+
+/**
+ * The minimum a world must expose to be pushed by a hand.
+ *
+ * Both SimWorld and SandboxWorld satisfy this, so the same coupling drives a
+ * solved problem and a composed scene without either knowing about the other.
+ */
+export interface CouplableWorld {
+  readonly interactableIds: readonly string[]
+  bodyById(id: string): Matter.Body | undefined
+  setVelocityMs(id: string, v: [number, number]): void
+  setPositionM(id: string, p: [number, number]): void
+}
 
 export interface CouplingState {
   contact: boolean
@@ -50,7 +64,7 @@ export class HandCoupling {
    * applied directly (it is a position constraint, not a force), so callers
    * should call this once per fixed step, not once per rendered frame.
    */
-  update(world: SimWorld, hand: HandFrame | null): CouplingState {
+  update(world: CouplableWorld, hand: HandFrame | null): CouplingState {
     if (!hand) {
       this.grabbedId = null
       return IDLE
@@ -117,7 +131,7 @@ export class HandCoupling {
   }
 
   /** Nearest pushable body within GRAB_RADIUS_M of the palm, or null. */
-  private nearestInteractable(world: SimWorld, x: number, y: number): string | null {
+  private nearestInteractable(world: CouplableWorld, x: number, y: number): string | null {
     let best: string | null = null
     let bestDist = GRAB_RADIUS_M
 

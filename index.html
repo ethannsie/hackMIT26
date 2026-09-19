@@ -67,11 +67,47 @@
       .caveat { font-size: 12px; color: var(--warn); border-left: 2px solid var(--warn); padding-left: 8px; margin-top: 8px; }
       .repairs { border-top: 1px solid var(--line); padding-top: 10px; font-size: 12px; color: var(--warn); }
       .repairs ul { margin: 6px 0 0; padding-left: 18px; }
+
+      /* --- sandbox ------------------------------------------------------ */
+      .sb-block { border-top: 1px solid var(--line); padding: 12px 0; }
+      .sb-block:first-child { border-top: none; padding-top: 0; }
+      .sb-block h4 { margin: 0 0 8px; font-size: 12px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--dim); }
+      .sb-block h4 code { text-transform: none; letter-spacing: 0; color: var(--accent); font-size: 11px; }
+      .sb-block select { width: 100%; margin-bottom: 10px; }
+      .sb-hint { font-size: 12px; color: var(--dim); margin: 0 0 10px; line-height: 1.45; }
+      .sb-check { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--dim); margin-top: 8px; }
+      .sb-palette { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+      .sb-chip {
+        display: flex; align-items: center; gap: 8px; text-align: left;
+        padding: 8px 10px; font-size: 12px;
+      }
+      .sb-chip .ico { font-size: 15px; color: var(--accent); width: 16px; text-align: center; }
+      .sb-chip.armed { border-color: var(--accent); background: #10233a; }
+      .sb-delete { width: 100%; margin-top: 10px; color: var(--error); border-color: #3a2226; }
+      .sb-delete:hover { border-color: var(--error); }
+      .energy-split { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--dim); margin-bottom: 12px; font-family: ui-monospace, monospace; }
+      .energy-split b { color: var(--text); font-weight: 600; }
+      .law { border-left: 2px solid var(--line); padding: 6px 0 6px 10px; margin-bottom: 10px; }
+      .law.ok { border-color: #3fb950; }
+      .law.bad { border-color: var(--error); }
+      .law.muted { border-color: var(--line); opacity: .72; }
+      .law-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 600; }
+      .law-verdict { font-weight: 400; font-size: 11px; color: var(--dim); }
+      .law.ok .law-verdict { color: #3fb950; }
+      .law.bad .law-verdict { color: var(--error); }
+      .law-val { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text); margin-top: 3px; }
+      .law-init { color: var(--dim); margin-left: 8px; font-size: 11px; }
+      .law-why { margin: 6px 0 0; padding-left: 16px; font-size: 11px; color: var(--dim); line-height: 1.5; }
+      [hidden] { display: none !important; }
     </style>
   </head>
   <body>
     <header>
       <h1>IRL Physics Sim</h1>
+      <select id="mode">
+        <option value="problem">Problem mode</option>
+        <option value="sandbox">Sandbox mode</option>
+      </select>
       <select id="problem-type"></select>
       <button id="play">Pause</button>
       <button id="reset">Reset</button>
@@ -80,8 +116,11 @@
     </header>
     <main><canvas id="stage"></canvas></main>
     <aside>
-      <div id="knobs"></div>
-      <div id="derivation"></div>
+      <div id="problem-panel">
+        <div id="knobs"></div>
+        <div id="derivation"></div>
+      </div>
+      <div id="sandbox-panel" hidden></div>
     </aside>
     <script type="module" src="/src/main.ts"></script>
   </body>

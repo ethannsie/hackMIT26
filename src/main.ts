@@ -14,6 +14,7 @@ import { HandCoupling, type CouplingState } from './hand/coupling.ts'
 import { MockHandSource } from './hand/mock.ts'
 import { extractFromImage } from './extract/client.ts'
 import { PRESETS, KNOBS } from './presets.ts'
+import { SandboxMode } from './sandbox/ui.ts'
 import { CONFIDENCE_FLOOR, PROBLEM_TYPES, type ProblemSpec, type ProblemType } from './spec/types.ts'
 
 const $ = <T extends HTMLElement>(sel: string): T => {
@@ -28,6 +29,9 @@ const knobsEl = $<HTMLDivElement>('#knobs')
 const typeEl = $<HTMLSelectElement>('#problem-type')
 const statusEl = $<HTMLDivElement>('#status')
 const fileEl = $<HTMLInputElement>('#photo')
+const sandboxAside = $<HTMLDivElement>('#sandbox-panel')
+const problemAside = $<HTMLDivElement>('#problem-panel')
+const modeEl = $<HTMLSelectElement>('#mode')
 
 const view = new CanvasView(canvas)
 const coupling = new HandCoupling()
@@ -37,17 +41,21 @@ let world = new SimWorld(spec)
 let repairs: string[] = []
 let running = true
 
+function setStatus(text: string, tone: 'ok' | 'warn' | 'error' = 'ok'): void {
+  statusEl.textContent = text
+  statusEl.dataset['tone'] = tone
+}
+
+const sandbox = new SandboxMode(canvas, sandboxAside, setStatus)
+type Mode = 'problem' | 'sandbox'
+let mode: Mode = 'problem'
+
 const hand = new MockHandSource({
   element: canvas,
   // Kept in step with the view so a mouse metre and a sim metre agree.
   metresPerPixel: 1 / view.pixelsPerMetre,
 })
 void hand.start()
-
-function setStatus(text: string, tone: 'ok' | 'warn' | 'error' = 'ok'): void {
-  statusEl.textContent = text
-  statusEl.dataset['tone'] = tone
-}
 
 /** Swap in a new spec: rebuild the world, the sliders and the derivation. */
 function load(next: ProblemSpec, nextRepairs: string[] = []): void {
@@ -109,9 +117,41 @@ typeEl.addEventListener('change', () => {
   setStatus(`loaded preset: ${typeEl.value.replace(/_/g, ' ')}`)
 })
 
+modeEl.addEventListener('change', () => {
+  setMode(modeEl.value as Mode)
+})
+
+function setMode(next: Mode): void {
+  mode = next
+  modeEl.value = next
+  // Keep the URL in step, so a demo can be opened straight into either mode.
+  const hash = next === 'sandbox' ? '#sandbox' : ''
+  if (window.location.hash !== hash) history.replaceState(null, '', hash || window.location.pathname)
+  const inSandbox = mode === 'sandbox'
+  problemAside.hidden = inSandbox
+  sandboxAside.hidden = !inSandbox
+  // The problem-mode controls make no sense over a composed scene.
+  typeEl.hidden = inSandbox
+  fileEl.hidden = inSandbox
+
+  if (inSandbox) {
+    hand.stop()
+    sandbox.start()
+  } else {
+    sandbox.stop()
+    void hand.start()
+    setStatus('problem mode — drag on the canvas to push, hold space to grab and throw')
+  }
+}
+
 $('#reset').addEventListener('click', () => {
-  world.reset()
-  setStatus('reset')
+  if (mode === 'sandbox') {
+    sandbox.reset()
+    setStatus('sandbox reset to the authored scene')
+  } else {
+    world.reset()
+    setStatus('reset')
+  }
 })
 const playBtn = $<HTMLButtonElement>('#play')
 playBtn.addEventListener('click', () => {
@@ -165,6 +205,12 @@ function frame(nowMs: number): void {
   const elapsed = nowMs - lastMs
   lastMs = nowMs
 
+  if (mode === 'sandbox') {
+    sandbox.frame(elapsed, running)
+    requestAnimationFrame(frame)
+    return
+  }
+
   if (running) {
     // Sample the hand once per fixed step, not once per rendered frame.
     world.advanceWith(elapsed, () => {
@@ -178,5 +224,7 @@ function frame(nowMs: number): void {
 }
 
 load(spec)
-setStatus('ready — drag on the canvas to push, hold space to grab and throw')
+// setMode sets its own status line for whichever mode it enters, so nothing
+// should overwrite it afterwards.
+setMode(window.location.hash === '#sandbox' ? 'sandbox' : 'problem')
 requestAnimationFrame(frame)

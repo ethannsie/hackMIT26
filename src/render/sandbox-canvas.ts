@@ -19,6 +19,10 @@ export interface SandboxDrawOptions {
   paths: Record<string, { x: number; y: number }[]>
   forces: ForceVector[]
   hand: HandFrame | null
+  /** Components that meet nothing in the dry run; drawn flagged. */
+  isolated?: string[]
+  /** Predicted paths from the dry run, shown while the scene is at rest. */
+  previews?: Record<string, { x: number; y: number }[]> | null
 }
 
 const COLORS = {
@@ -35,6 +39,8 @@ const COLORS = {
   text: '#c9d1d9',
   dim: '#6e7681',
   velocity: '#5ee6a8',
+  preview: '#8f9bb3',
+  isolated: '#ff7b72',
 }
 
 export class SandboxView {
@@ -183,6 +189,27 @@ export class SandboxView {
     ctx.globalAlpha = 1
   }
 
+  /**
+   * Where the dry run says each body will go. Dotted, so it cannot be mistaken
+   * for a traced path; red for a body that gets there without meeting anything.
+   */
+  private drawPreviews(previews: Record<string, { x: number; y: number }[]>, isolated: string[]): void {
+    const { ctx } = this
+    ctx.save()
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([2, 5])
+    ctx.globalAlpha = 0.55
+    for (const [id, pts] of Object.entries(previews)) {
+      if (pts.length < 2) continue
+      ctx.strokeStyle = isolated.includes(id) ? COLORS.isolated : COLORS.preview
+      ctx.beginPath()
+      ctx.moveTo(this.sx(mToPx(pts[0]!.x)), this.sy(-mToPx(pts[0]!.y)))
+      for (const p of pts.slice(1)) ctx.lineTo(this.sx(mToPx(p.x)), this.sy(-mToPx(p.y)))
+      ctx.stroke()
+    }
+    ctx.restore()
+  }
+
   /** Free-body diagram, normalised so the largest force fills a fixed length. */
   private drawForces(body: Matter.Body, forces: ForceVector[]): void {
     if (forces.length === 0) return
@@ -297,9 +324,12 @@ export class SandboxView {
       ctx.fill()
     }
 
-    // Springs: a coil between anchor and bob.
+    // Predicted paths, before anything that should sit on top of them.
+    if (opts.previews) this.drawPreviews(opts.previews, opts.isolated ?? [])
+
+    // Springs: a coil between anchor and bob (or block).
     for (const c of world.components) {
-      if (c.entity.kind !== 'spring' || !c.main || !c.anchor) continue
+      if ((c.entity.kind !== 'spring' && c.entity.kind !== 'spring_h') || !c.main || !c.anchor) continue
       const ax = this.sx(c.anchor.position.x)
       const ay = this.sy(c.anchor.position.y)
       const bx = this.sx(c.main.position.x)
@@ -339,13 +369,22 @@ export class SandboxView {
       ctx.stroke()
     }
 
-    // Anchors and pivots.
+    // Anchors and pivots. A floor spring's anchor is a plate, so it reads as
+    // "bolted to something" rather than a floating dot.
     for (const c of world.components) {
       if (!c.anchor) continue
       ctx.fillStyle = COLORS.static
-      ctx.beginPath()
-      ctx.arc(this.sx(c.anchor.position.x), this.sy(c.anchor.position.y), 5, 0, Math.PI * 2)
-      ctx.fill()
+      const ax = this.sx(c.anchor.position.x)
+      const ay = this.sy(c.anchor.position.y)
+      if (c.entity.kind === 'spring_h') {
+        const h = Math.max(10, mToPx(c.entity.block_size_m) * this.scale)
+        const dir = c.entity.direction < 0 ? 1 : -1
+        ctx.fillRect(dir < 0 ? ax - 6 : ax, ay - h / 2, 6, h)
+      } else {
+        ctx.beginPath()
+        ctx.arc(ax, ay, 5, 0, Math.PI * 2)
+        ctx.fill()
+      }
     }
 
     // Bodies.
@@ -418,6 +457,27 @@ export class SandboxView {
       const fallback = world.components.find((c) => c.main && !c.main.isStatic)?.main
       const body = target ?? fallback
       if (body) this.drawForces(body, opts.forces)
+    }
+
+    // Components that meet nothing: flagged, so the fix is obvious.
+    for (const id of opts.isolated ?? []) {
+      const c = world.components.find((x) => x.entity.id === id)
+      const body = c?.main ?? c?.region ?? c?.anchor
+      if (!body) continue
+      const b = body.bounds
+      const pad = 8
+      const x = this.sx(b.min.x) - pad
+      const y = this.sy(b.min.y) - pad
+      const w = (b.max.x - b.min.x) * this.scale + pad * 2
+      const h = (b.max.y - b.min.y) * this.scale + pad * 2
+      ctx.strokeStyle = COLORS.isolated
+      ctx.lineWidth = 2
+      ctx.setLineDash([6, 4])
+      ctx.strokeRect(x, y, w, h)
+      ctx.setLineDash([])
+      ctx.fillStyle = COLORS.isolated
+      ctx.font = '600 10px ui-monospace, monospace'
+      ctx.fillText('isolated', x, y - 5)
     }
 
     // Ghost preview of the armed component.

@@ -80,6 +80,11 @@ const sandbox = new SandboxMode(
     timeline.clear()
     recorder.clear(null)
   },
+  (reason) => {
+    // The interaction rule: a scene with an isolated component does not run.
+    setRunning(false)
+    setStatus(reason, 'warn')
+  },
 )
 
 type Mode = 'problem' | 'sandbox'

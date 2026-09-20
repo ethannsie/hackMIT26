@@ -424,14 +424,38 @@ hits a pendulum, which knocks a ball into a wall.
 | **Ball** | mass, radius, bounciness, friction, charge, initial velocity | Give it charge and it curves inside a magnetic field |
 | **Box** | mass, width, height, angle, bounciness, friction, charge, initial velocity | Slides and tumbles |
 | **Ramp** | angle, length, friction μ | Static |
-| **Wall** | width, height, angle, bounciness, friction | Static |
+| **Wall (any angle)** | width, height, angle, bounciness, friction | Static |
+| **Vertical wall** | height, thickness, bounciness, friction | Static; stands on the floor, placed by its base |
 | **Pendulum** | rod length, bob mass, bob radius, start angle | Rigid rod, integrated as 1-DOF; things can knock it |
-| **Spring** | stiffness k (N/m), mass, rest length, start stretch, bob radius | Real k, so T = 2π√(m/k) actually holds |
+| **Spring (hanging)** | stiffness k (N/m), mass, rest length, start stretch, bob radius | Real k, so T = 2π√(m/k) actually holds |
+| **Spring (horizontal)** | stiffness k, block mass, rest length, start stretch, block size, direction, block friction | Lies along the floor with a block on the end; at friction 0 it is textbook SHM, and the block hits things |
 | **Magnetic field** | width, height, B (signed) | A region; charged bodies inside curve, speed never changes |
 
 Each scene also carries an **arena** — width, height, and whether the boundary is
 solid — plus gravity and whether there is a floor. The arena is drawn, so what is
 in play is visible rather than implied.
+
+Ramps: a ball rolls down at any friction, but a **box only slides at friction 0**.
+Matter's own friction model pins a box on a 28° slope even at μ = 0.05; the
+problem-mode incline sidesteps this with explicit Coulomb friction, the sandbox
+does not.
+
+### The interaction rule
+
+**Every component must interact with at least one other, or the scene will not
+run.** A pendulum's arc has to reach something, a rolling ball has to be on a
+line that meets another body, a wall has to be in somebody's way.
+
+Whether that is true is not guessed from geometry. After every edit the authored
+scene is dry-run for 10 s in a scratch world and every pair of components that
+Matter brings into contact is recorded (a field region counts when a body
+crosses it). The **Interactions** block in the panel lists each component's
+partners with the time of first contact; anything that met nothing is marked
+*isolated*, boxed in red on the canvas, and play and single-step are refused
+until it is moved. While the scene sits at its start, each movable body's
+predicted path is drawn dotted, so the arc and the line of travel are visible
+before pressing play. The check costs a few milliseconds and never touches the
+live world.
 
 ### Editing
 

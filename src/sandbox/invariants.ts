@@ -90,6 +90,7 @@ function analyse(scene: SandboxScene): {
         angular.push(`${e.id} exerts an external torque`)
         break
       case 'wall':
+      case 'wall_v':
         if (e.friction > 0) energy.push(`${e.id} has friction ${e.friction}`)
         if (e.restitution < 1) energy.push(`${e.id} has bounciness ${e.restitution}`)
         momentum.push(`${e.id} is fixed in place and pushes back`)
@@ -99,6 +100,10 @@ function analyse(scene: SandboxScene): {
         momentum.push(`${e.id}'s pivot holds it in place`)
         break
       case 'spring':
+        momentum.push(`${e.id}'s anchor holds it in place`)
+        break
+      case 'spring_h':
+        if (e.friction > 0) energy.push(`${e.id}'s block has friction ${e.friction}`)
         momentum.push(`${e.id}'s anchor holds it in place`)
         break
       case 'magnet_region':

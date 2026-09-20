@@ -10,7 +10,8 @@
  */
 import { SandboxWorld } from '../src/sandbox/world.ts'
 import { InvariantTracker } from '../src/sandbox/invariants.ts'
-import { loadPreset } from '../src/sandbox/presets.ts'
+import { checkInteractions } from '../src/sandbox/interactions.ts'
+import { loadPreset, SANDBOX_PRESETS } from '../src/sandbox/presets.ts'
 import type { SandboxScene } from '../src/sandbox/types.ts'
 
 let failures = 0
@@ -65,6 +66,121 @@ console.log('\nISOLATED SPRING  a lone component must still match its closed for
   } else {
     ok('spring oscillates', false)
   }
+}
+
+// ---------------------------------------------------------------------------
+console.log('\nHORIZONTAL SPRING  a block on a frictionless floor is textbook SHM')
+{
+  // k = 100 N/m on 1 kg, gravity ON and a floor under the block: the floor
+  // carries the weight, so the period must still be 2*pi*sqrt(m/k) = 0.6283 s.
+  const scene: SandboxScene = {
+    name: 'floor spring test',
+    gravity_ms2: 9.81,
+    ground: true,
+    arena: { width_m: 16, height_m: 9, walls: false },
+    entities: [
+      {
+        id: 'spring_h_1', kind: 'spring_h', position_m: [-2, 0.15],
+        rest_length_m: 1, stiffness_n_per_m: 100, mass_kg: 1,
+        block_size_m: 0.3, start_extension_m: 0.3, direction: 1, friction: 0,
+      },
+    ],
+  }
+  const w = new SandboxWorld(scene)
+  const expectedT = 2 * Math.PI * Math.sqrt(1 / 100)
+  const crossings: number[] = []
+  let prev = w.states()[0]!.velocity_ms[0]
+  for (let i = 0; i < 40_000 && crossings.length < 3; i++) {
+    w.step()
+    const v = w.states()[0]!.velocity_ms[0]
+    if (prev < 0 && v >= 0) crossings.push(w.time_s)
+    prev = v
+  }
+  if (crossings.length >= 2) {
+    check('period (s)', crossings[1]! - crossings[0]!, expectedT, 2, '(T = 2π√(m/k), gravity on)')
+  } else {
+    ok('floor spring oscillates', false)
+  }
+  // And it stays on the floor: the block's centre never leaves its half-size.
+  const y = w.states()[0]!.position_m[1]
+  ok(`block stays on the floor: y = ${y.toFixed(3)} m`, Math.abs(y - 0.15) < 0.02)
+}
+
+// ---------------------------------------------------------------------------
+console.log('\nVERTICAL WALL  stands on the floor and sends a ball back')
+{
+  const scene: SandboxScene = {
+    name: 'wall test',
+    gravity_ms2: 9.81,
+    ground: true,
+    arena: { width_m: 16, height_m: 9, walls: false },
+    entities: [
+      {
+        id: 'ball_1', kind: 'ball', position_m: [-2, 0.15],
+        radius_m: 0.15, mass_kg: 1, restitution: 0.9, friction: 0,
+        charge_c: 0, velocity_ms: [3, 0],
+      },
+      {
+        id: 'wall_v_1', kind: 'wall_v', position_m: [1, 0],
+        height_m: 1.2, thickness_m: 0.2, friction: 0, restitution: 0.9,
+      },
+    ],
+  }
+  const w = new SandboxWorld(scene)
+  const wall = w.bodyById('wall_v_1')!
+  check('wall base sits on the floor (m)', -wall.bounds.max.y / 200, 0, 0.01)
+  check('wall top at its height (m)', -wall.bounds.min.y / 200, 1.2, 1)
+  let maxX = -Infinity
+  for (let i = 0; i < 480; i++) {
+    w.step()
+    maxX = Math.max(maxX, w.states()[0]!.position_m[0])
+  }
+  const after = w.states()[0]!
+  ok(`ball never passes the wall: max x = ${maxX.toFixed(3)} m`, maxX < 1 - 0.1 - 0.15 + 0.02)
+  ok(`ball comes back: vx = ${after.velocity_ms[0].toFixed(2)} m/s`, after.velocity_ms[0] < -1)
+}
+
+// ---------------------------------------------------------------------------
+console.log('\nINTERACTION RULE  every component must meet another, and the check must notice when one does not')
+{
+  for (const key of Object.keys(SANDBOX_PRESETS)) {
+    const r = checkInteractions(loadPreset(key))
+    ok(
+      `preset "${key}": nothing isolated`,
+      r.isolated.length === 0,
+      r.isolated.length ? `(isolated: ${r.isolated.join(', ')})` : `(${r.ids.length} components)`,
+    )
+  }
+
+  // A pendulum whose arc reaches a ball, and a ball off to the side that
+  // nothing ever touches.
+  const scene: SandboxScene = {
+    name: 'isolation test',
+    gravity_ms2: 9.81,
+    ground: true,
+    arena: { width_m: 14, height_m: 5, walls: true },
+    entities: [
+      {
+        id: 'pendulum_1', kind: 'pendulum', position_m: [0, 1.5],
+        length_m: 1.2, bob_mass_kg: 1, bob_radius_m: 0.12, start_angle_deg: -60,
+      },
+      {
+        id: 'ball_1', kind: 'ball', position_m: [0.35, 0.15],
+        radius_m: 0.15, mass_kg: 1, restitution: 0.8, friction: 0.05,
+        charge_c: 0, velocity_ms: [0, 0],
+      },
+      {
+        id: 'ball_2', kind: 'ball', position_m: [-5.5, 0.15],
+        radius_m: 0.15, mass_kg: 1, restitution: 0.8, friction: 0.05,
+        charge_c: 0, velocity_ms: [0, 0],
+      },
+    ],
+  }
+  const r = checkInteractions(scene)
+  ok('pendulum arc reaches the ball in its path', r.partners['pendulum_1']!.some((c) => c.id === 'ball_1'))
+  ok('the ball reports the pendulum back', r.partners['ball_1']!.some((c) => c.id === 'pendulum_1'))
+  ok('the ball nothing reaches is isolated', r.isolated.length === 1 && r.isolated[0] === 'ball_2')
+  ok('predicted paths cover every movable body', ['pendulum_1', 'ball_1', 'ball_2'].every((id) => (r.paths[id]?.length ?? 0) > 10))
 }
 
 // ---------------------------------------------------------------------------

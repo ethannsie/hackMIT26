@@ -1,6 +1,6 @@
 # Hand-cut rope physics puzzles
 
-Two playable levels of five planned. Hands **only cut ropes**: candy cannot be
+Five playable physics puzzles. Hands **only cut ropes**: candy cannot be
 picked up, dragged, thrown or rescued. All motion comes from gravity, rope
 tension and collision response. Full live hand overlay, index blade, velocity
 arrow, flight trail, three stars, and win/loss feedback.
@@ -10,25 +10,34 @@ arrow, flight trail, three stars, and win/loss feedback.
 - **Drop & bounce:** cut the hanging candy. It accelerates under gravity and
   rebounds off the curved rubber bumper toward the creature.
 
-Both have verified three-star solutions without injected velocities or forces.
+- **Two to tango:** cut the left rope to start a rightward swing, then cut the
+  remaining rope to launch. Numbered anchors match the individual touch controls.
+- **Ramp runner:** the falling candy bounces onto a slope, develops spin, rolls
+  off the edge and follows a ballistic path into the goal.
+- **Bank shot:** release while rising right, hit the wall and rebound back into
+  the creature. The winning trajectory requires the wall collision.
+
+All five have verified three-star solutions without injected velocities or forces.
 Missing the creature lets the candy leave the stage and enables another attempt.
 
 ## Play and resume
 
 Open the main app at `http://localhost:5173/` and touchscreen menu at
 `http://localhost:8770/`. Select **Cut the Rope** from the menu.
-All buttons stay on the touchscreen: **Cut rope**, **Restart level**, **Next
-level** (after winning level one), and **Exit game**. The big screen has no
-mouse or keyboard game controls. After level two, the preview is complete;
-**Replay levels** starts again at level one, keeping best stars;
-levels 3–5 are deferred. Exit restores the underlying simulation.
+The **level selector** on the touchscreen offers direct access to all five
+puzzles, highlights the current level, and displays best stars. All levels are
+available immediately. Selecting one starts a fresh attempt and saves the choice.
+All buttons stay on the touchscreen: **Cut rope** (individual numbered buttons
+for two ropes), **Restart level**, **Next level** after each win through level
+four, **Replay levels** after level five, and **Exit game**. The big screen has
+no mouse or keyboard game controls. Exit restores the underlying simulation.
 
 A pointing index or open hand sweeps through a rope to cut it. Curl the index
 to reposition safely; the full hand remains visible. Tracking loss, stale
 observations, hand switches and large jumps break the blade stroke. There is
 no grabbing gesture or force coupling to the candy.
 
-The big screen saves current level and best stars in localStorage. Reopening
+The big screen saves current level and best stars in localStorage. Existing two-level saves are extended without losing scores. Reopening
 in the same browser resumes that level with a fresh attempt. Storage is
 optional; blocked storage does not prevent play. Restart retries the current
 level. Panel and Vite processes need relaunching after laptop shutdown.
@@ -70,8 +79,9 @@ npx tsx scripts/verify-rope.ts
 .venv/bin/python panel/test_rope_game.py
 ```
 
-Checks cover both cut-only three-star solutions, an incorrect cut, the viable
+Checks cover all five cut-only three-star solutions at 30/60/144 Hz, required
+collisions and cut order, an incorrect cut, the viable
 swing timing window, pendulum release momentum, gravity, render-rate
 determinism, collision containment, gesture continuity, progress persistence,
-Next gating/end-of-preview, HTTP control transport and tracking lifecycle.
+level selection, Next gating/end-of-campaign, HTTP control transport and tracking lifecycle.
 Physical hand feel and two-display GX10 rehearsal remain hardware checks.

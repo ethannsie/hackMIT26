@@ -118,7 +118,7 @@ export class RopeArt {
     }
 
     // The visible rope is the exact line tested by the blade.
-    for (const rope of world.ropes) {
+    for (const [index, rope] of world.ropes.entries()) {
       if (!rope.cut) {
         ctx.lineCap = 'round'; ctx.strokeStyle = '#735632'; ctx.lineWidth = 8
         ctx.beginPath(); ctx.moveTo(rope.anchor.x, rope.anchor.y); ctx.lineTo(world.candy.x, world.candy.y); ctx.stroke()
@@ -130,6 +130,10 @@ export class RopeArt {
       this.disc(ctx, rope.anchor.x, rope.anchor.y, 15, '#667963')
       this.disc(ctx, rope.anchor.x - 2, rope.anchor.y - 3, 9, '#b2c3a2')
       this.disc(ctx, rope.anchor.x - 2, rope.anchor.y - 3, 3, '#63735a')
+      if (world.ropes.length > 1) {
+        ctx.fillStyle = '#315b42'; ctx.font = '700 18px system-ui'; ctx.textAlign = 'center'
+        ctx.fillText(String(index + 1), rope.anchor.x, rope.anchor.y - 24)
+      }
     }
     world.level.stars.forEach((star, i) => {
       if (!world.collected[i]) {

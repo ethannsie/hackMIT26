@@ -1,58 +1,90 @@
-/* Isolated touchscreen controller. Game rendering stays on the big display. */
+/* Touchscreen-only controls. Level names, hints and scores come from the game. */
 (() => {
   const view = document.querySelector('#view-rope');
   const status = document.querySelector('#rope-status');
   const stars = document.querySelector('#rope-stars');
   const retry = document.querySelector('#rope-retry');
-  const cut = document.createElement('button');
-  cut.className = 'act';
-  cut.innerHTML = '<span class="act-label">✂ Cut rope</span>';
+  const levels = view.querySelector('.rope-levels');
+  let busy = false, pending = false, game = null;
+  const cards = new Map();
+  const cuts = [0, 1].map(index => {
+    const button = document.createElement('button');
+    button.className = 'act'; button.hidden = true;
+    button.innerHTML = `<span class="act-label">✂ Cut rope ${index + 1}</span>`;
+    button.addEventListener('click', () => control('cut', { rope: index }));
+    retry.before(button);
+    return button;
+  });
   const next = document.createElement('button');
   next.id = 'rope-next'; next.className = 'act'; next.hidden = true;
   next.innerHTML = '<span class="act-label">Next level →</span>';
-  retry.before(cut, next);
-  let busy = false, pending = false, level = 1;
-  cut.addEventListener('click', () => control('cut'));
-  next.addEventListener('click', () => control(level === 2 ? 'replay' : 'next'));
+  retry.before(next);
+  next.addEventListener('click', () => control(game?.level === game?.levelCount ? 'replay' : 'next'));
   retry.addEventListener('click', () => control('restart'));
-  async function control(action) {
-    if (pending) return;
-    pending = true; cut.disabled = retry.disabled = next.disabled = true;
-    try {
-      const res = await fetch('/api/rope/control', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action }) });
-      if (!res.ok) throw new Error('Control failed');
-      status.textContent = action === 'next' ? 'Starting Drop & bounce…' : action === 'replay' ? 'Back to Swing & soar…' : action === 'restart' ? 'Fresh candy. Watch the motion, then cut.' : 'Rope cut. Let physics finish!';
-    } catch { status.textContent = 'Control unavailable. Check the display and try again.'; }
-    finally { setTimeout(() => { pending = false; refresh(); }, 1200); }
+  view.querySelector('.rope-intro > p').textContent = 'Choose a level below. Swipe your index finger through a rope to cut.';
+  levels.setAttribute('aria-label', 'Choose any of the five physics levels');
+  levels.setAttribute('role', 'group');
+  levels.replaceChildren();
+
+  function disableControls() {
+    [...cuts, next, retry, ...cards.values()].forEach(button => { button.disabled = true; });
   }
-  view.querySelector('.rope-intro > p').textContent = 'Swipe your index finger through the rope. Gravity and momentum do the rest.';
-  const levels = view.querySelector('.rope-levels');
-  levels.setAttribute('aria-label', 'Two playable levels; levels three through five coming later');
-  levels.innerHTML = '<span>01 · Swing & soar</span><span>02 · Drop & bounce</span><span>03–05 · Later</span>';
+  async function control(action, data = {}) {
+    if (pending) return;
+    pending = true; disableControls();
+    try {
+      const res = await fetch('/api/rope/control', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, ...data }) });
+      if (!res.ok) throw new Error('Control failed');
+      status.textContent = action === 'select' ? `Starting level ${data.level}…`
+        : action === 'next' ? 'Starting the next puzzle…'
+        : action === 'replay' ? 'Back to Swing & soar…'
+        : action === 'restart' ? 'Fresh candy. Watch the motion, then cut.' : 'Rope cut. Watch the motion!';
+    } catch { status.textContent = 'Control unavailable. Check the display and try again.'; }
+    finally { setTimeout(() => { pending = false; refresh(); }, action === 'cut' ? 150 : 1200); }
+  }
+  function render() {
+    for (const level of game.levels || []) {
+      let button = cards.get(level.id);
+      if (!button) {
+        button = document.createElement('button'); button.className = 'rope-level-card';
+        button.innerHTML = '<b></b><span class="rope-level-name"></span><span class="rope-level-score"></span>';
+        button.addEventListener('click', () => control('select', { level: level.id }));
+        cards.set(level.id, button); levels.append(button);
+      }
+      button.querySelector('b').textContent = String(level.id).padStart(2, '0');
+      button.querySelector('.rope-level-name').textContent = level.name;
+      button.querySelector('.rope-level-score').textContent = level.best < 0 ? 'Not played' : '★'.repeat(level.best) + '☆'.repeat(3 - level.best);
+      button.setAttribute('aria-label', `Level ${level.id}: ${level.name}. ${level.best < 0 ? 'Not completed' : `Best ${level.best} of 3 stars`}`);
+      button.setAttribute('aria-pressed', String(game.level === level.id));
+      button.disabled = !game.connected;
+    }
+    const collected = game.connected ? game.stars : 0;
+    stars.textContent = '★'.repeat(collected || 0) + '☆'.repeat(3 - (collected || 0));
+    retry.disabled = !game.connected;
+    cuts.forEach((button, i) => {
+      const rope = game.ropes?.[i];
+      button.hidden = !rope;
+      button.disabled = !game.connected || !rope || rope.cut || game.outcome !== 'playing';
+      button.querySelector('.act-label').textContent = game.ropes?.length === 1 ? '✂ Cut rope' : `✂ Cut rope ${i + 1}`;
+    });
+    next.querySelector('.act-label').textContent = game.level === game.levelCount ? 'Replay levels ↻' : 'Next level →';
+    next.hidden = !game.connected || game.outcome !== 'won'; next.disabled = next.hidden;
+    const level = game.levels?.find(level => level.id === game.level);
+    status.textContent = !game.connected ? 'Main display is offline. Start the app to choose a level.'
+      : game.outcome === 'won' ? (game.level < game.levelCount ? 'Sweet success! Tap Next level or pick any puzzle below.' : 'Final level complete! Choose a puzzle, replay the levels, or Exit.')
+      : game.outcome === 'lost' ? 'The candy missed! Restart or choose another level.'
+      : `${level?.hint || 'Watch the motion, then cut.'} ${game.tracked ? '' : 'Show your hand to the camera.'}`;
+  }
   async function refresh() {
     if (view.hidden || busy || pending) return;
     busy = true;
     try {
       const res = await fetch('/api/rope/status');
       if (!res.ok) throw new Error('No status');
-      const game = await res.json();
-      level = game.level;
-      next.querySelector('.act-label').textContent = level === 2 ? 'Replay levels ↻' : 'Next level →';
-      const collected = game.connected ? (game.stars || 0) : 0;
-      stars.textContent = '★'.repeat(collected) + '☆'.repeat(3 - collected);
-      retry.disabled = !game.connected;
-      cut.disabled = !game.connected || game.cuts > 0 || game.outcome !== 'playing';
-      next.hidden = !game.connected || game.outcome !== 'won';
-      next.disabled = next.hidden;
-      levels.querySelectorAll('span').forEach((span, i) => span.classList.toggle('active', game.connected && i + 1 === game.level));
-      status.textContent = !game.connected ? 'Waiting for the main display. Open the physics app on the big screen.'
-        : game.outcome === 'won' ? (game.level === 1 ? 'Sweet success! Tap Next level for Drop & bounce.' : 'Both puzzles complete! Replay levels, retry this puzzle, or Exit.')
-        : game.outcome === 'lost' ? 'The candy missed! Tap Restart and try another cut timing.'
-        : game.tracked ? (game.level === 1 ? 'Cut while the candy swings right. The blue arrow shows its velocity.' : 'Cut the rope. Watch gravity accelerate the candy into the bumper.')
-        : 'Show one hand to the camera. Point your index finger to cut.';
+      const result = await res.json();
+      if (!pending) { game = result; render(); }
     } catch {
-      status.textContent = 'Panel disconnected. Reconnecting…';
-      cut.disabled = retry.disabled = next.disabled = true;
+      status.textContent = 'Panel disconnected. Reconnecting…'; disableControls();
     } finally { busy = false; }
   }
   new MutationObserver(refresh).observe(view, { attributes: true, attributeFilter: ['hidden'] });

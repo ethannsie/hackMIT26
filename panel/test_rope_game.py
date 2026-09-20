@@ -64,38 +64,72 @@ class RopeIntegrationTests(unittest.TestCase):
         self.request('/api/view', {"view": "home"})
         self.assertEqual(self.request('/api/rope/control', {"action": "restart"})[0], 409)
 
-    def test_next_requires_a_connected_win_and_stops_after_level_two(self):
+    def payload(self, level=1, outcome="playing"):
+        return {"outcome": outcome, "stars": 0, "cuts": 0, "tracked": True,
+                "level": level, "levelCount": 5,
+                "levels": [{"id": i, "name": f"Puzzle {i}", "hint": "Cut the rope", "best": -1} for i in range(1, 6)],
+                "ropes": [{"index": i, "cut": False} for i in range(2 if level == 3 else 1)]}
+
+    def test_next_requires_connected_win_and_stops_after_five(self):
         self.request('/api/view', {"view": "rope"})
-        payload = {"outcome": "playing", "stars": 0, "cuts": 0, "level": 1, "levelCount": 2}
-        self.request('/api/rope/status', payload)
+        self.request('/api/rope/status', self.payload())
         self.assertEqual(self.request('/api/rope/control', {"action": "next"})[0], 409)
-        self.request('/api/rope/status', {**payload, "outcome": "won", "stars": 3})
         queue = ps.hub.subscribe()
         try:
-            self.assertEqual(self.request('/api/rope/control', {"action": "next"})[0], 200)
-            self.assertEqual(queue.get(timeout=1), ('rope:control', {"action": "next"}))
+            for level in range(1, 5):
+                self.assertEqual(self.request('/api/rope/status', self.payload(level, "won"))[0], 200)
+                self.assertEqual(self.request('/api/rope/control', {"action": "next"})[0], 200)
+                self.assertEqual(queue.get(timeout=1), ('rope:control', {"action": "next"}))
+                self.assertEqual(self.request('/api/rope/control', {"action": "replay"})[0], 409)
         finally:
             ps.hub.unsubscribe(queue)
         with ps.rope_game.lock:
             ps.rope_game.updated -= 10
         self.assertEqual(self.request('/api/rope/control', {"action": "next"})[0], 409)
-        self.request('/api/rope/status', {**payload, "outcome": "won", "level": 2})
+        self.request('/api/rope/status', self.payload(5, "won"))
         self.assertEqual(self.request('/api/rope/control', {"action": "next"})[0], 409)
         self.assertEqual(self.request('/api/rope/control', {"action": "replay"})[0], 200)
-        self.assertEqual(self.request('/api/rope/status', {**payload, "level": 3})[0], 400)
 
-    def test_status_and_disconnect(self):
-        payload = {"outcome": "won", "stars": 3, "cuts": 1, "tracked": True, "level": 1, "levelCount": 2}
+    def test_select_any_level_and_cut_each_rope_over_event_bus(self):
+        self.request('/api/view', {"view": "rope"})
+        self.request('/api/rope/status', self.payload(3))
+        queue = ps.hub.subscribe()
+        try:
+            for level in range(1, 6):
+                event = {"action": "select", "level": level}
+                self.assertEqual(self.request('/api/rope/control', event)[0], 200)
+                self.assertEqual(queue.get(timeout=1), ('rope:control', event))
+            for rope in (0, 1):
+                event = {"action": "cut", "rope": rope}
+                self.assertEqual(self.request('/api/rope/control', event)[0], 200)
+                self.assertEqual(queue.get(timeout=1), ('rope:control', event))
+        finally:
+            ps.hub.unsubscribe(queue)
+        for level in (None, 0, 6, 1.5, True, "3"):
+            self.assertEqual(self.request('/api/rope/control', {"action": "select", "level": level})[0], 400)
+        for rope in (-1, 2, True, "1"):
+            self.assertEqual(self.request('/api/rope/control', {"action": "cut", "rope": rope})[0], 400)
+        with ps.rope_game.lock:
+            ps.rope_game.updated -= 10
+        self.assertEqual(self.request('/api/rope/control', {"action": "select", "level": 1})[0], 409)
+        self.request('/api/view', {"view": "home"})
+        self.assertEqual(self.request('/api/rope/control', {"action": "select", "level": 1})[0], 409)
+
+    def test_status_catalogue_and_disconnect(self):
+        payload = self.payload(3, "won")
+        payload['stars'] = 3
+        payload['levels'][2]['best'] = 3
         self.assertEqual(self.request('/api/rope/status', payload)[0], 200)
         _, status = self.request('/api/rope/status')
         self.assertTrue(status['connected'])
-        self.assertEqual(status['stars'], 3)
+        self.assertEqual(status['levels'][2]['best'], 3)
+        self.assertEqual(len(status['ropes']), 2)
         with ps.rope_game.lock:
             ps.rope_game.updated -= 10
         self.assertFalse(self.request('/api/rope/status')[1]['connected'])
-        self.assertEqual(self.request('/api/rope/status', {**payload, 'stars': 99})[0], 400)
-        self.assertEqual(self.request('/api/rope/status', {**payload, 'cuts': 'bad'})[0], 400)
-        self.assertEqual(self.request('/api/rope/status', {**payload, 'outcome': 'bad'})[0], 400)
+        for field, value in [('stars', 99), ('cuts', 'bad'), ('outcome', 'bad'), ('levels', []), ('ropes', []), ('level', 6)]:
+            self.assertEqual(self.request('/api/rope/status', {**payload, field: value})[0], 400)
+        self.assertEqual(self.request('/api/rope/status', {**payload, 'cuts': 1})[0], 400)
 
 
 if __name__ == '__main__':

@@ -12,8 +12,7 @@ export class RopeProgress {
       const saved = JSON.parse(storage?.getItem(KEY) ?? 'null')
       if (Array.isArray(saved?.best)) this.best = this.best.map((_, i) =>
         Number.isInteger(saved.best[i]) && saved.best[i] >= 0 && saved.best[i] <= 3 ? saved.best[i] : -1)
-      if (Number.isInteger(saved?.index) && saved.index >= 0 && saved.index < LEVELS.length
-        && this.best.slice(0, saved.index).every(score => score >= 0)) this.index = saved.index
+      if (Number.isInteger(saved?.index) && saved.index >= 0 && saved.index < LEVELS.length) this.index = saved.index
     } catch { /* Storage unavailable or corrupt save: start at level one. */ }
   }
   complete(stars: number): void {
@@ -24,6 +23,11 @@ export class RopeProgress {
   next(outcome: Outcome): boolean {
     if (!this.canNext(outcome)) return false
     this.index++; this.save(); return true
+  }
+  select(level: number): boolean {
+    const index = LEVELS.findIndex(candidate => candidate.id === level)
+    if (index < 0) return false
+    this.index = index; this.save(); return true
   }
   replay(): void { this.index = 0; this.save() }
   private save(): void {

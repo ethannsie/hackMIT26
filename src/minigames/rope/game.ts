@@ -42,7 +42,7 @@ export class RopeGame {
         <header><div class="brand">cut the rope<small>THE HAND-TRACKED PHYSICS PUZZLES</small></div>
           <div class="score" aria-label="0 of 3 stars">☆☆☆</div><div class="level">LEVEL 0${this.world.level.id} / 0${LEVELS.length}</div></header>
         <span class="source" role="status"></span><footer>Cut · Restart · Next level · Exit on the touchscreen</footer>
-        <section class="result" hidden aria-live="polite"><div class="card"><div class="big-stars"></div><h1></h1><p class="message"></p><p class="next">Tap Restart on the touchscreen to play again.</p><p class="coming">Two-level preview · More puzzles later.</p></div></section>
+        <section class="result" hidden aria-live="polite"><div class="card"><div class="big-stars"></div><h1></h1><p class="message"></p><p class="next">Tap Restart on the touchscreen to play again.</p><p class="coming">Five physics puzzles · Choose any level on the touchscreen.</p></div></section>
       </main>`
     this.background = Array.from(document.body.children)
       .filter((element): element is HTMLElement => element instanceof HTMLElement)
@@ -63,7 +63,14 @@ export class RopeGame {
     this.raf = requestAnimationFrame(this.frame)
   }
 
-  cutRopes(): void { this.world.cutAll() }
+  cutRopes(rope?: number): void {
+    // Touch fallback addresses each rope separately, like a hand cut.
+    if (this.world.cutRope(rope ?? this.world.ropes.findIndex(candidate => !candidate.cut))) this.lastReport = 0
+  }
+
+  selectLevel(level: number): void {
+    if (this.progress.select(level)) this.restart()
+  }
 
   nextLevel(): void {
     if (this.progress.next(this.world.outcome)) this.restart()
@@ -130,14 +137,17 @@ export class RopeGame {
           ? `${this.world.stars} of 3 stars. A well-timed cut and a well-earned snack.` : 'The candy missed our friend. Try a different cut timing.'
         this.root.querySelector('.next')!.textContent = this.progress.canNext(this.world.outcome)
           ? 'Tap Next level on the touchscreen.'
-          : this.world.outcome === 'won' ? 'Preview complete! Tap Replay levels or Exit on the touchscreen.'
+          : this.world.outcome === 'won' ? 'Final level complete! Pick a level or Replay on the touchscreen.'
           : 'Tap Restart on the touchscreen to try again.'
       }
     }
     if (now - this.lastReport > 1000 && !this.reportInFlight) {
       this.lastReport = now; this.reportInFlight = true
       void fetch(`${this.base}/api/rope/status`, { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ outcome: this.world.outcome, stars: this.world.stars, cuts: this.world.cuts, tracked: this.tracked, level: this.world.level.id, levelCount: LEVELS.length }) })
+        body: JSON.stringify({ outcome: this.world.outcome, stars: this.world.stars, cuts: this.world.cuts, tracked: this.tracked, level: this.world.level.id, levelCount: LEVELS.length,
+          ropes: this.world.ropes.map((rope, index) => ({ index, cut: rope.cut })),
+          levels: LEVELS.map((level, index) => ({ id: level.id, name: level.name, hint: level.hint, best: this.progress.best[index] })),
+        }) })
         .catch(() => undefined).finally(() => { this.reportInFlight = false })
     }
     this.raf = requestAnimationFrame(this.frame)

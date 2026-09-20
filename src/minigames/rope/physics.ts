@@ -68,6 +68,11 @@ export class RopeWorld {
 
   dispose(): void { Composite.clear(this.engine.world, false); Engine.clear(this.engine) }
 
+  cutRope(index: number): boolean {
+    const rope = this.ropes[index]
+    if (this.outcome !== 'playing' || !rope || rope.cut || !Number.isInteger(index)) return false
+    this.cut(rope); return true
+  }
   cutAll(): void {
     if (this.outcome !== 'playing') return
     for (const rope of this.ropes) if (!rope.cut) this.cut(rope)

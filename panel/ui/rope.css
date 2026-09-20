@@ -13,3 +13,20 @@
 .rope-levels span.active { background: #d5eeb0; color: #284330; opacity: 1; }
 
 #rope-next[hidden] { display: none; }
+/* Five finger-sized level targets fit the 1024×600 controller. */
+.rope-intro { gap: 8px; padding: 14px 18px; }
+.rope-intro h1 { font-size: 32px; }
+#rope-stars { font-size: 40px; }
+#rope-status { min-height: 40px; font-size: 15px; }
+.rope-levels { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); width: 100%; gap: 8px; }
+.rope-levels .rope-level-card { min-height: 90px; padding: 8px; border: 1px solid #547144; border-radius: 12px; background: #1b2b1d; color: #d9e9c5; font: inherit; cursor: pointer; touch-action: manipulation; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.rope-level-card b { font-size: 20px; }
+.rope-levels .rope-level-card span { padding: 0; border: 0; opacity: 1; }
+.rope-level-card .rope-level-name { font-size: 13px; }
+.rope-level-card .rope-level-score { color: #efc259; font-size: 14px; }
+.rope-levels .rope-level-card[aria-pressed='true'] { background: #d5eeb0; color: #284330; border-color: #d5eeb0; }
+.rope-level-card[aria-pressed='true'] .rope-level-score { color: #735c12; }
+.rope-level-card:focus-visible { outline: 3px solid #efc259; outline-offset: 2px; }
+.rope-level-card:disabled { opacity: .5; cursor: default; }
+#view-rope .act[hidden] { display: none; }
+@media (max-width: 680px) { .rope-levels { grid-template-columns: repeat(3, minmax(0, 1fr)); } .rope-level-card { min-height: 76px; } }

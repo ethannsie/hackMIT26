@@ -73,14 +73,39 @@ function frame(x: number, time: number, overrides: Partial<HandFrame> = {}): Han
 const playground = LEVELS[0]!
 const empty = (candy: {x: number; y: number}): RopeLevel => ({ ...playground, candy, anchors: [], stars: [], mouth: { x: -1000, y: -1000 } })
 
-test('Both authored puzzles have three-star solutions using cuts alone', () => {
-  for (const [index, wait] of [[0, 0.9], [1, 0]] as const) {
+test('All five authored puzzles have three-star solutions using cuts alone at 30/60/144 Hz', () => {
+  for (const hz of [30, 60, 144]) for (const [index, wait] of [[0, 0.9], [1, 0], [2, 1], [3, 0], [4, 1.1]] as const) {
     const w = new RopeWorld(LEVELS[index]!)
-    let hits = 0
-    Matter.Events.on(w.engine, 'collisionStart', () => hits++)
-    tick(w, wait); w.cutAll(); tick(w, 4)
-    assert.equal(w.outcome, 'won', `level ${index + 1}`); assert.equal(w.stars, 3)
-    if (index === 1) assert.ok(hits > 0, 'level two must actually hit the bumper')
+    const hits = new Set<string>()
+    Matter.Events.on(w.engine, 'collisionStart', event => {
+      for (const pair of event.pairs) { hits.add(pair.bodyA.label); hits.add(pair.bodyB.label) }
+    })
+    if (index === 2) assert.ok(w.cutRope(0))
+    tick(w, wait, hz); assert.ok(w.cutRope(index === 2 ? 1 : 0)); tick(w, 5, hz)
+    assert.equal(w.outcome, 'won', `level ${index + 1} at ${hz} Hz`); assert.equal(w.stars, 3)
+    if (index === 1) assert.ok(hits.has('rubber bumper'))
+    if (index === 3) { assert.ok(hits.has('ramp')); assert.ok(Math.abs(w.angle) > 1) }
+    if (index === 4) { assert.ok(hits.has('wall')); assert.ok(w.velocity.x < 0) }
+    w.dispose()
+  }
+})
+test('Two ropes require sequence; cutting both or the wrong side misses', () => {
+  for (const first of [0, 1]) {
+    const w = new RopeWorld(LEVELS[2]!); tick(w, 2)
+    assert.ok(Math.abs(w.candy.x - 650) < 1, 'two ropes hold candy in balance')
+    w.cutRope(first)
+    if (first === 1) tick(w, 1)
+    w.cutRope(1 - first); tick(w, 5)
+    assert.equal(w.outcome, 'lost')
+  }
+  const w = new RopeWorld(LEVELS[2]!)
+  assert.ok(!w.cutRope(-1)); assert.ok(!w.cutRope(0.5)); assert.ok(!w.cutRope(9))
+  assert.ok(w.cutRope(0)); assert.ok(!w.cutRope(0)); assert.equal(w.ropes[1]!.cut, false)
+})
+test('Ramp and bank-shot solutions depend on real collisions', () => {
+  for (const [index, wait] of [[3, 0], [4, 1.1]] as const) {
+    const w = new RopeWorld({ ...LEVELS[index]!, surfaces: [] })
+    tick(w, wait); w.cutRope(0); tick(w, 5); assert.equal(w.outcome, 'lost')
   }
 })
 test('Swing puzzle rewards timing; an immediate cut misses', () => {
@@ -145,20 +170,36 @@ test('Curled spare fingers do not disable an extended index; curled index is saf
   f.landmarks_m[8] = { x: 510, y: 400, z: 0 }
   assert.ok(!indexExtended(f))
 })
-test('Progress advances only on a win, survives reload, and stops at level two', () => {
+test('Next requires a win and stops at five; selection preserves best scores across reload', () => {
   let saved: string | null = null
   const storage = { getItem: () => saved, setItem: (_: string, value: string) => { saved = value } }
   const p = new RopeProgress(storage)
   assert.ok(!p.next('playing')); assert.ok(!p.next('lost')); assert.equal(p.index, 0)
-  p.complete(2); assert.ok(p.next('won')); assert.equal(p.index, 1)
+  for (let index = 0; index < 5; index++) {
+    assert.equal(p.index, index); p.complete(3)
+    assert.equal(p.next('won'), index < 4)
+  }
+  assert.equal(p.index, 4)
   const resumed = new RopeProgress(storage)
-  assert.equal(resumed.index, 1); assert.equal(resumed.best[0], 2)
-  resumed.complete(3); assert.ok(!resumed.next('won')); assert.equal(resumed.index, 1)
+  assert.equal(resumed.index, 4); assert.deepEqual(resumed.best, [3, 3, 3, 3, 3])
+  assert.ok(resumed.select(3)); resumed.complete(1)
+  assert.equal(new RopeProgress(storage).index, 2); assert.equal(resumed.best[2], 3)
+  for (const invalid of [0, 6, 1.5, NaN]) assert.ok(!resumed.select(invalid))
+  assert.equal(resumed.index, 2)
   resumed.replay(); assert.equal(new RopeProgress(storage).index, 0)
-  assert.equal(new RopeProgress(storage).best[1], 3)
+  assert.equal(new RopeProgress(storage).best[4], 3)
   saved = '{broken'; assert.equal(new RopeProgress(storage).index, 0)
-  saved = JSON.stringify({ index: 4, best: [99] }); assert.equal(new RopeProgress(storage).index, 0)
+  saved = JSON.stringify({ index: 9, best: [99] }); assert.equal(new RopeProgress(storage).index, 0)
   const denied = new RopeProgress({ getItem() { throw Error() }, setItem() { throw Error() } })
-  denied.complete(1); assert.ok(denied.next('won'))
+  denied.complete(1); assert.ok(denied.next('won')); assert.ok(denied.select(5))
+})
+test('All levels are selectable immediately; existing two-level saves migrate', () => {
+  let saved = JSON.stringify({ index: 1, best: [2, 3] })
+  const storage = { getItem: () => saved, setItem: (_: string, value: string) => { saved = value } }
+  const p = new RopeProgress(storage)
+  assert.equal(p.index, 1); assert.deepEqual(p.best, [2, 3, -1, -1, -1])
+  assert.ok(p.select(5)); assert.equal(new RopeProgress(storage).index, 4)
+  assert.deepEqual(new RopeProgress(storage).best, [2, 3, -1, -1, -1])
+  p.select(1); assert.equal(p.best[0], 2)
 })
 console.log(`\n${checks} rope-game checks passed`)

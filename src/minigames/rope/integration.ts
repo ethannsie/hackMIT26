@@ -18,11 +18,12 @@ export class RopeMinigame {
       else if (!this.standalone) this.close()
     })
     this.stream.addEventListener('rope:control', e => {
-      const { action } = JSON.parse((e as MessageEvent).data) as { action: string }
+      const { action, level, rope } = JSON.parse((e as MessageEvent).data) as { action: string; level?: number; rope?: number }
       if (action === 'restart') this.game?.restart()
+      if (action === 'select' && typeof level === 'number') this.game?.selectLevel(level)
       if (action === 'replay') this.game?.replay()
       if (action === 'next') this.game?.nextLevel()
-      if (action === 'cut') this.game?.cutRopes()
+      if (action === 'cut') this.game?.cutRopes(rope)
     })
     if (this.standalone) {
       this.open()

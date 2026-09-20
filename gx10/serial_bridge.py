@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-ESP32 serial -> browser WebSocket bridge.
+Legacy ESP32 serial -> browser WebSocket bridge.
+
+Not used by the current webcam-only, two-display demo. Do not start it as part
+of the active launch flow. Retained for reference; no sensor hardware required.
 
 Why this exists: the browser on the GX10 is snap Chromium (or Firefox), and
 neither can open /dev/ttyUSB0 via WebSerial — the snap's `serial-port`

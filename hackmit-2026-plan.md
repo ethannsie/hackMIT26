@@ -2,17 +2,23 @@
 
 **HackMIT 2026 · Sept 19–20 · MIT**
 
-Working reference for the whole team. If something here conflicts with what someone said verbally, this document wins. If this document is wrong, fix it here rather than arguing in Discord.
+Working reference for the whole team. Updated September 19 for the confirmed webcam-only, two-display demo. New user decisions supersede older planning notes; record them here and in the local handoff.
 
 ---
 
 ## 1. What we are building
 
-Point a camera at a physics problem in a textbook. The system extracts the problem's structure, builds a live simulation of it, and lets you reach into that simulation with your actual hand to push, tilt, and throw the objects while the derivation updates in real time beside it.
+A visitor taps **Take a picture** on a 7-inch touchscreen menu. A USB webcam captures a physics problem, a model on the ASUS Ascent GX10 extracts its parameters, and the corresponding simulation opens on the larger ASUS portable monitor. The webcam then tracks the visitor's hand so they can interact with the simulation.
+
+**All models run on the GX10**, including the hand tracker and photo extraction model. The target deployment runs the browser and simulation there too. The portable monitor is the simulation display; the 7-inch touchscreen is the controller. Laptops are development machines.
+
+The initial demo supports four problem types: projectile, inclined plane, pendulum and 1D collision. The user confirmed this set on September 19. Extra simulations already in the repository are outside this initial menu scope.
+
+No external depth sensor, IMU, microcontroller, sensor firmware, serial bridge or haptic device is required. This replaces the earlier sensor-fusion plan.
 
 One sentence for judges:
 
-> A student photographs a mechanics problem and then solves it with their hands instead of a pencil.
+> Photograph a physics problem, then explore its simulation with your hands.
 
 ---
 
@@ -26,7 +32,7 @@ Two things already exist and judges may know them.
 
 That is most of our pipeline, published two months ago. **Say this to judges before they say it to us.** Naming the prior art yourself reads as command of the field. Pretending it doesn't exist reads as not having looked.
 
-Our differentiator is the interface. LivePhys gives you a simulation you manipulate with a cursor. We give you one you manipulate with your hand, in measured three-dimensional space, with the derivation rewriting itself as you move.
+Our differentiator is the interface. LivePhys gives you a simulation you manipulate with a cursor. We give you one you manipulate with webcam-tracked hand gestures, with the derivation displayed beside the simulation. We do not claim measured physical hand depth.
 
 That distinction matters most for exactly the concepts intro mechanics students fail at: torque, angular momentum, and anything where the vector points somewhere nothing is moving. You cannot feel a cross product with a mouse.
 
@@ -34,114 +40,74 @@ That distinction matters most for exactly the concepts intro mechanics students 
 
 ## 3. Architecture
 
-Five stages. Each one has a clean interface to the next, so people can work in parallel without blocking.
+Target workflow; the touchscreen controller and two-display integration still need implementation and testing.
 
-```
-[1] CAPTURE      phone or webcam photo of a textbook problem
-       |
-       v
-[2] EXTRACT      ASUS Ascent GX10, local inference
-                 image -> strict JSON problem spec
-       |
-       v
-[3] BUILD        spec -> parameterized sim, one per problem type
-                 Matter.js 2D solver on a plane in a three.js 3D scene
-       |
-       v
-[4] TRACK        MediaPipe worldLandmarks (hand pose, metric)
-                 + VL53L1X ToF (palm depth, metric)
-                 = hand placed in the 3D scene
-       |
-       v
-[5] INTERACT     hand crosses the sim plane -> contact
-                 contact drives forces -> sim resolves
-                 -> derivation panel re-solves with live values
+```text
+7-inch touchscreen: menu -> Take a picture -> preview / retake / loading
+                                      |
+USB webcam ----------------------> captured image
+                                      |
+GX10 local vision model ---------> validated ProblemSpec
+                                      |
+GX10 simulation -----------------> ASUS portable monitor: scene + equations
+          ^
+          |
+GX10 hand tracker <--------------- same USB webcam in interaction mode
 ```
 
-**The JSON problem spec is the contract between every stage.** It is the single most important artifact in this project. Freeze it early, and do not let anyone change it after hour 4 without telling the whole team.
+1. **Capture:** controller requests a webcam still of the printed problem.
+2. **Extract:** the GX10 model returns a structured spec; validate it and restrict the demo to the four supported types.
+3. **Build:** load the matching parameterized Matter.js simulation on the ASUS display.
+4. **Track:** process webcam frames on the GX10 and map hand landmarks into simulation coordinates.
+5. **Interact:** gestures drive push, grab and release; render the resulting motion and equations on the ASUS display.
+
+Use one webcam initially, switching between capture and interaction. Pause interaction during capture and while the page obscures the hand. Resume only after a valid hand is reacquired. The camera position must make both tasks practical; test printed text legibility early.
+
+Two views must share one active problem and simulation session. A controller action must update the ASUS view, not start an independent simulation in another tab. The transport and view routes remain implementation work; do not advertise invented launch URLs.
+
+`ProblemSpec` connects extraction to simulation; `HandFrame` connects tracking to interaction. Existing contracts live in `src/spec/types.ts` and `src/hand/types.ts`.
 
 ---
 
 ## 4. The problem spec
 
-Design target: strict, small, and boring. Every field has a unit in its name. No free-form strings the sim has to parse.
+The source of truth is `src/spec/types.ts`, with structured-output schema in `src/spec/schema.ts` and validation in `src/spec/validate.ts`. The implemented spec is flat; do not reuse the older nested `given` / `objects` draft.
 
-```json
-{
-  "problem_type": "inclined_plane",
-  "confidence": 0.92,
-  "given": {
-    "angle_deg": 25,
-    "ramp_length_m": 1.2,
-    "mass_kg": 2.0,
-    "mu_kinetic": 0.15,
-    "initial_velocity_ms": 0,
-    "gravity_ms2": 9.81
-  },
-  "objects": [
-    {
-      "id": "block",
-      "kind": "box",
-      "interactable": true,
-      "mass_kg": 2.0,
-      "dims_m": [0.10, 0.06]
-    },
-    {
-      "id": "ramp",
-      "kind": "incline",
-      "interactable": false,
-      "angle_deg": 25,
-      "length_m": 1.2
-    }
-  ],
-  "asked_for": ["acceleration_ms2", "time_to_bottom_s", "final_velocity_ms"],
-  "raw_text": "A 2.0 kg block is released from rest at the top of a 1.2 m ramp inclined at 25 degrees..."
-}
-```
-
-Rules:
-
-- `problem_type` must be one of the enumerated types in section 6. If the model is unsure, it returns the closest match plus a low `confidence`, and the UI asks the user to confirm with a toggle. Never guess silently.
-- `interactable: true` means the hand can push it. Ramps, walls, ground, and pivots are always `false`.
-- `confidence` below 0.6 triggers the manual problem-type picker rather than a wrong simulation.
-- `raw_text` is kept so the derivation panel can quote the original problem.
+- Initial menu types: `projectile`, `inclined_plane`, `pendulum`, `collision_1d`.
+- Parameter names carry units. Projectile uses `launch_angle_deg`; incline uses `incline_angle_deg`.
+- Validate extracted values before loading a scene and show corrections or missing information to the user.
+- Low confidence, unreadable photos and unsupported types lead to retake or manual selection; do not silently substitute an unrelated problem.
+- The code supports additional types. Restricting the initial capture/menu experience to four is a pending product change, not a schema change made by this documentation update.
 
 ---
 
-## 5. Stack, locked
+## 5. Stack and deployment
 
-| Layer | Choice | Why |
+| Layer | Choice | Status / purpose |
 |---|---|---|
-| App | TypeScript, single web app | One language, one build, one render loop |
-| 3D render | three.js | Hand skeleton, scene, depth cues |
-| Physics | Matter.js (2D) | Every problem here is planar; solver is battle-tested |
-| Hand tracking | MediaPipe Tasks Vision, HandLandmarker | `worldLandmarks` gives metric 3D hand pose free |
-| Math display | KaTeX | Fast, no MathJax startup cost |
-| Sensors | ESP32 over USB serial → local Python bridge → WebSocket | No wifi dependency; WebSerial is unavailable in the GX10's browser (§9) |
-| Inference | ASUS Ascent GX10, local | ASUS challenge, works when venue wifi dies |
-| Fallback inference | Hosted API, 2s timeout | GX10 stall must never freeze a demo |
+| App | TypeScript web app on GX10 | Existing Vite app; controller/display views still to build |
+| Simulation display | ASUS portable monitor | Scene, equations, vectors and graphs |
+| Controller | 7-inch touchscreen | Take a picture, preview, retake and loading/result state |
+| Physics | Matter.js 2D | Existing deterministic solver |
+| Rendering | Existing canvas renderer | three.js dependency exists; 3D rendering is not a demo requirement |
+| Tracking | Webcam hand model on GX10 | MediaPipe is the planned adapter; integrate actual tracker with HandSource |
+| Math | KaTeX | Existing derivation panel |
+| Extraction | Ollama on GX10 | Local photo-to-spec model; measured extraction about 28 seconds |
+| Models | All local on GX10 | Hosted API exists in code, but is outside the agreed demo path |
 
-### The 3D question, resolved
-
-We render in 3D and simulate in 2D. These are independent decisions and conflating them is what made this confusing.
-
-The scene is a three.js 3D space. The hand is a full articulated 21-joint skeleton with real perspective and depth. The simulation lives on a visible plane inside that space. You move around and *through* that plane in three dimensions.
-
-Every problem in our library is genuinely planar, so a 2D solver loses nothing, and it saves the four-hour rewrite to Rapier or cannon-es. Visually it is completely three-dimensional and no judge will know or care that the solver is 2D.
-
-**Do not switch to a 3D physics engine.** If someone insists later, the answer is Rapier (`@dimforge/rapier3d`), not a Python rewrite, and only if Tier 0 has been green for hours.
+The four initial problems are planar. Keep the existing 2D solver and prioritize clear hand interaction over a renderer rewrite. A landmark overlay can help users see what the webcam detects without implying measured physical depth.
 
 ---
 
 ## 6. The simulation library
 
-Four problem types. **This list does not grow.** Adding a fifth at 2 AM is how we lose.
+Four problem types in the initial demo menu. The existing engine has nine types; preserve that code, but do not expand the initial demo scope.
 
 Each sim is hand-written and parameterized. We are not building a general physics compiler; the model only fills in numbers.
 
 ### 6.1 Projectile
 
-Params: `v0_ms`, `angle_deg`, `h0_m`, `g`
+Params: `v0_ms`, `launch_angle_deg`, `h0_m`, `gravity_ms2`
 
 ```
 x(t) = v0·cos(θ)·t
@@ -151,11 +117,11 @@ range           R   = v0·cos(θ)·t_f
 apex height     h   = h0 + v0²sin²(θ)/(2g)
 ```
 
-Hand role: grab the projectile, throw it. Launch velocity comes from measured hand velocity at release.
+Hand role: grab the projectile, throw it. Launch velocity comes from tracked movement mapped to simulation units at release, not a claim of calibrated physical speed.
 
 ### 6.2 Inclined plane
 
-Params: `angle_deg`, `mass_kg`, `mu_kinetic`, `ramp_length_m`
+Params: `incline_angle_deg`, `mass_kg`, `mu_kinetic`, `ramp_length_m`
 
 ```
 sliding block   a = g·(sin θ − μ·cos θ)
@@ -163,7 +129,7 @@ normal force    N = m·g·cos θ
 rolling sphere  a = (5/7)·g·sin θ
 ```
 
-Hand role: tilt the ramp. This is our best interaction. The angle is continuously controlled by hand orientation and every number on screen re-solves live.
+Hand role: push the block along the ramp. Webcam-based ramp-angle control is optional future work; it does not require an IMU and is not part of the initial acceptance criteria.
 
 **Note the rolling sphere case.** A solid sphere rolling without slipping accelerates at 5/7 of the sliding value, about 71%, because energy goes into rotation. If we ever compare against a real ball, this discrepancy will appear reliably and has a beautiful explanation. Good material for the "why did that happen?" feature.
 
@@ -201,234 +167,135 @@ Spring-mass: `ω = √(k/m)`, `T = 2π·√(m/k)`
 
 ---
 
-## 7. Hand tracking
+## 7. Webcam hand tracking
 
-### What MediaPipe gives us
+Run the hand model on the GX10 using frames from the USB webcam. Implement the existing `HandSource` interface (`start`, `stop`, `current`) and output `HandFrame` in simulation coordinates: +x right, +y up, +z toward the viewer.
 
-`HandLandmarker` returns two sets per hand:
+Map image coordinates to the visible simulation area, handle mirroring consistently, smooth movement and derive release velocity in simulation units. Pinch near an object grabs it; release throws it. Define the push gesture explicitly and tune it with the real camera.
 
-- `landmarks` — normalized image coordinates, with a z that is relative to the wrist and unitless. **Not usable as real depth.**
-- `worldLandmarks` — all 21 points as metric 3D coordinates in meters, origin at the hand's geometric center. **This is real 3D hand pose and it is free.**
+**No physical depth measurement is required.** Do not make contact depend on a ToF stream or claim camera-relative metric depth. The existing coupling has a synthetic z/penetration input; the webcam adapter may derive that from an explicit gesture or the coupling can be adapted to image-plane contact. That choice remains implementation work.
 
-So the *shape and articulation* of the hand in 3D is already solved with zero hardware. Render this immediately.
+On tracking loss or stale frames, release/clear interaction safely; do not throw with an old velocity. Clear interaction when entering capture mode, and reacquire the hand before resuming.
 
-What is missing is where that hand sits relative to the camera. That single number is what the sensor supplies.
-
-### Fusion
-
-1. MediaPipe normalized x, y gives a ray from the camera through the palm.
-2. VL53L1X ToF gives palm distance in millimeters along roughly that direction.
-3. Place the hand along the ray at the measured distance.
-4. Orient and articulate it using `worldLandmarks`.
-
-Result: a fully articulated hand at a real metric position in the scene.
-
-Pitch line: *we don't infer depth, we measure it.*
-
-### Depth as touch
-
-The sim plane sits at a fixed z. Contact is defined by crossing it.
-
-```
-penetration = palm_z − plane_z
-if penetration > 0:
-    contact = true
-    F = clamp(k · penetration, 0, F_max)
-```
-
-Hovering above the plane is free-look. Pushing into it applies force proportional to how far in you reach. This gives the whole "reach into the simulation" feeling without any 3D physics.
-
-Render a contact glow or a shadow where fingertips cross the plane, so depth reads instantly to a judge watching from three feet away.
+As of this documentation update, this branch still wires `MockHandSource` into `src/main.ts`. The user reports a hand-tracking model is being developed; its actual adapter must land and be tested on GX10. Sandbox hand interaction is separate integration work and not required for the four-problem demo.
 
 ---
 
-## 8. Sensors and firmware
+## 8. Touchscreen controller and camera workflow
 
-### Parts
+The 7-inch touchscreen is the menu, while the ASUS portable monitor shows the simulation. Both views run on the GX10 and share state.
 
-| Part | Role | Priority | Status (Sat 19 Sep) |
-|---|---|---|---|
-| VL53L1X ToF | Palm depth, metric, up to ~50 Hz | P0 | **Have.** 3 DWEII orders, each a 2-pack → up to 6 units |
-| BNO055 9-DOF | Hand or ramp orientation, absolute, no drift | P1 | **Have.** Adafruit board |
-| ESP32-WROOM-32 | Reads sensors, streams to browser over USB serial | P0 | **Get from desk** (7 left at last check). ESP32-S3-DevKitC as spare (166 left) |
-| Mini breadboard + jumpers | Wiring | P0 | **Have.** Plus WAGO 221s for a 3V3/GND power bus |
-| Micro-USB data cable | ESP-WROOM-32 → GX10 (or laptop) | P0 | **Have.** Use with USB-C-to-A adapters |
-| Coin vibration motor + MOSFET PWM module | Buzz on plane contact (haptic bonus) | P2 | Motors **have**; MOSFET module still to grab. DRV2605L is out |
-| ~~VL53L7CX 8×8 ToF~~ | ~~Upgrade: 64 depth zones~~ | ~~P2~~ | **Gone from inventory. Dropped.** See "Lateral coverage" below |
+### Required flow
 
-**Do not substitute the RPLIDAR C1 for the L7CX.** It is a spinning single-plane 360° scanner at ~10 Hz: the hand only registers while it crosses that plane, so it is worse than the L1X on exactly the axis a hand moves when reaching into the sim. Wrong geometry, wrong rate, and a UART protocol we have not budgeted for.
+1. Show a large **Take a picture** button and camera readiness state.
+2. Enter capture mode, pause hand interaction and show a preview so the visitor can frame the printed problem.
+3. Capture a still from the webcam. Offer retake and submit it to the local extraction API.
+4. Show a clear loading state while the model runs; prevent duplicate captures from repeatedly loading scenes.
+5. On a valid supported result, load its simulation on the ASUS display and show success on the controller.
+6. Remove the page, return the webcam to hand interaction and require hand reacquisition.
+7. On unreadable, unsupported or failed input, offer retake or a manual choice among the four types.
 
-**Do not use the Arduino UNO Q as the sensor MCU.** Its USB-C is wired to the Linux MPU, not the microcontroller; the MCU's `Serial` goes out the D0/D1 header pins and the only USB path is `Monitor` via App Lab's Bridge — not a COM port WebSerial can open. It stays in the box unless we are desperate, in which case the path is MCU sketch → Bridge → Python WebSocket on its Linux side → browser over a laptop hotspot.
+The exact preview/confirmation layout may change during implementation. The required behavior is touch-triggered webcam capture followed by the corresponding simulation on the other screen.
 
-### Lateral coverage without the L7CX
+### Hardware acceptance
 
-The L7CX was only there to keep depth valid when the hand drifts out of the L1X's ~27° cone. Cover that in software plus spare sensors:
+- Both monitors work simultaneously as an extended desktop.
+- Touches map only to the 7-inch screen, with correct rotation and edge alignment.
+- The camera can read the actual printed problems and see the hand in the interaction area.
+- Switching capture/interaction modes does not create competing camera owners or leave a grabbed object stuck.
+- The controller and simulation remain in sync after retry, reset or window reload.
 
-1. Mount the L1X on the webcam so its cone is the centre of the frame.
-2. Use MediaPipe's normalized palm x,y to know whether the palm is inside the cone. Inside → trust ToF. Outside → hold last good depth, or use the size estimate below.
-3. Free fallback: `worldLandmarks` gives metric hand size, `landmarks` gives pixel size; ratio × focal length ≈ distance anywhere in frame. Rougher than ToF, but it fills the gaps.
-4. If that is not enough, wire a second L1X beside the first (separate XSHUT pins → distinct I²C addresses, same driver) for a wider cone.
-
-### Headers must be soldered first
-
-The DWEII L1X boards and the Adafruit BNO055 ship with the pin header **loose in the bag**. Nothing can be wired until ~6 pins per board are soldered at the restricted hot-work bench. Do this the moment the ESP32 is in hand — there will be a queue later. WAGOs cannot replace this: they clamp wire ends, not board holes. Friction-fitting the pins works until someone bumps the table and then I²C fails silently.
-
-### The I2C trap
-
-The VL53L1X defaults to **0x29**. The BNO055 is **0x28 or 0x29** depending on its address pin.
-
-**Tie the BNO055 to 0x28 before wiring anything.** If both land on 0x29 you will spend an hour debugging a bus conflict that looks like a broken sensor.
-
-### Serial protocol
-
-Newline-delimited JSON over USB serial at 115200, 50 to 100 Hz. On the GX10 a local Python bridge re-serves it as a WebSocket (§9); no wifi.
-
-```json
-{"t":1726790412,"depth_mm":412,"theta_deg":24.8,"gate":null}
-```
-
-Browser side:
-
-```js
-const port = await navigator.serial.requestPort();
-await port.open({ baudRate: 115200 });
-// on the GX10: gx10/serial_bridge.py reads the port and re-serves it as ws://localhost:8765;
-// browser: new WebSocket(...).onmessage → JSON.parse → same loop as MediaPipe
-```
-
-Keep the sensor read in the same animation frame loop as hand tracking. Two loops fighting each other is a 3 AM bug.
-
-### Calibration
-
-Budget 45 minutes and expect longer.
-
-- ToF zero offset against a known distance measured with an actual ruler
-- BNO055 zeroed flat on a level surface
-- Hand-to-plane distance threshold tuned with a person's actual hand, not a hand-shaped object
+`gx10/serial_bridge.py` is a legacy utility from the previous sensor plan. Do not launch it for this demo. No ESP32, ToF sensor, BNO055, firmware, wiring or soldering task remains in the active scope.
 
 ---
 
 ## 9. The GX10
 
-Two jobs, not one. If it only fires at photo ingest, the ASUS story is thin.
+The ASUS Ascent GX10 is the host for **all models**, the web app and the simulation. Photo extraction runs through local Ollama; the webcam hand tracker also runs on this machine. A live explanation model is optional future work, not a requirement for the pivot.
 
-1. **Ingest**: image to JSON problem spec.
-2. **Live**: the "why did that happen?" query runs locally with the current sim state as context, while the user is interacting.
+### Display and peripheral layout
 
-Then the entire loop is on-device and we can say so honestly.
+- **ASUS portable monitor:** simulation, equations and graphs. Earlier inventory called it a ZenScreen; the user called it a Zenbook portable monitor. Confirm the exact model/ports before choosing cables.
+- **7-inch touchscreen:** capture menu and status. It needs working video, power and touch data connections appropriate to its actual ports.
+- **USB webcam:** shared between printed-problem capture and hand interaction.
+- **Keyboard and mouse:** setup and recovery.
 
-### What it is
+Connect both displays to the GX10 as an extended desktop. The exact simultaneous video-output/adapter arrangement is not verified. Confirm it physically rather than assuming a USB-C cable or hub carries video. Map touch input to the small display and place each app view on its intended monitor.
 
-ASUS's build of the NVIDIA DGX Spark: GB10 Grace Blackwell, 128 GB unified memory, **ARM64**, 10GbE + Wi-Fi 7, HDMI 2.1, USB-C. Ships with DGX OS (Ubuntu 24.04) with CUDA, Docker + NVIDIA Container Toolkit and Ollama preinstalled. It is a Linux desktop, not an appliance.
+Laptops remain development machines. The target demo must not depend on a laptop or hosted inference. Existing hosted API support remains in code as a development contingency; leave `OPENAI_API_KEY` unset when verifying the all-local demo.
 
-### Deployment: run the whole demo on it (recommended)
+### Setup already reported by Claude
 
-The browser app is a static page. Nothing forces it onto a laptop. Run Chromium on the GX10 itself:
+SSH, Node 22, Chromium, no-sleep configuration, Ollama with resident models and the repository at `~/hackMIT26` are configured. See `gx10/README.md` for access and commands. Old setup also installed serial dependencies; their presence does not make sensors a requirement.
 
-- **7 in. HDMI touchscreen** → GX10 HDMI. This is the sim canvas at hand height.
-- **Webcam** → GX10 USB.
-- **ESP32** → GX10 USB, read by `gx10/serial_bridge.py` and served to the browser as a local WebSocket (see below — WebSerial is out).
-- **Ollama** at `http://localhost:11434`. No Cat6, no laptop Ethernet adapter, no cross-machine latency.
-
-Laptops stay dev machines: edit, push, `git pull` on the GX10, reload. Keep the app host-agnostic (base URL in one config constant) so a laptop can run the demo if the box dies.
-
-Fallback deployment: laptop runs the browser, GX10 is only the inference endpoint over the network (phone hotspot — venue Wi-Fi blocks device-to-device). Still hit local first, hosted API on a timeout. A GX10 stall must never freeze a live demo.
-
-### First boot (we have display + keyboard + mouse, so not headless)
-
-1. HDMI → 7 in. display, USB keyboard + mouse, power. It boots the moment power is applied. **No LED, no beep** — fan noise is the only sign of life. Do not press power again.
-2. The wizard needs Wi-Fi to finish account creation and pull a multi-GB OS update. Venue Wi-Fi with a captive portal or 802.1X login will not work in the wizard — **use a phone hotspot**, then switch to venue Wi-Fi later over SSH with `nmcli dev wifi connect "<SSID>" password "<pw>"`.
-3. Wizard: language/timezone → EULA → **user `hackmit`, shared team password** (this is the SSH login; tape it to the box) → analytics (skip) → Wi-Fi.
-4. Update + reboots take up to ~10 min with no feedback. **Do not cut power.**
-5. Headless fallback if the display path fails: on first boot only, the box broadcasts a Wi-Fi hotspot `spark-xxxx` (SSID + password on the sticker on the Quick Start card). Join it, open `http://spark-xxxx.local`, same wizard. Photograph the sticker — the hotspot never comes back after setup.
-
-### After first boot — done Sat 19 Sep evening
-
-Everything below is in `gx10/setup.sh` (re-runnable) and documented in `gx10/README.md`: SSH, `dialout`, no sleep/blank, Ollama on the LAN with models kept resident, Chromium, serial-bridge deps, repo clone.
-
-**Models — both preinstalled, no pull needed:**
-
-| model | role | measured on the box |
+| Model | Role | Recorded hardware result |
 |---|---|---|
-| `qwen3.8` (Qwen 3.5 27B, **vision**) | ingest: photo → JSON spec | 18 tok/s; ~30 s per photo on the real prompt + strict schema. Correct and deterministic |
-| `nemotron-3.5-lightning` (33B MoE) | live "why?" queries | 67 tok/s; **0.9 s** per sentence warm |
+| `qwen3.8` | Photo to spec | About 28 seconds on the tested synthetic problem image, with correct local output |
+| `qwen3-vl:8b` | Candidate faster extraction | Pull initiated; completion, accuracy and speed need verification |
+| `nemotron-3.5-lightning` | Optional later explanations | Recorded 67 tokens/s and 0.9 s warm sentence; explanation feature not integrated |
 
-`qwen3-vl:8b` is being pulled as a ~3× faster ingest option; A/B it Sunday morning.
+`server/index.ts` uses Ollama's OpenAI-compatible `/v1` endpoint. The configured local timeout is 45 seconds. Keep loading/retry UI responsive; test all four real printed samples rather than treating one synthetic-image success as full acceptance.
 
-**Extraction is wired**: `server/index.ts` calls the GX10's Ollama through its OpenAI-compatible `/v1` with the same prompt and schema as the hosted path, then falls back to OpenAI. The fallback timeout is **45 s, not 2 s** — the 27B model needs ~30 s for a 538-token spec, and a 2 s timeout would mean the GX10 never answers. Live queries keep a short timeout; they are sub-second.
+### Still to verify on the box
 
-**Sensors go serial → `gx10/serial_bridge.py` → `ws://localhost:8765` → browser.** Snap Chromium cannot open `/dev/ttyUSB0` and Firefox has no WebSerial, so the plan's WebSerial reader is replaced by a 100-line Python bridge. Better anyway: no port-picker click on the touchscreen, auto-reconnect when the ESP32 resets.
-
-ARM64 + Blackwell (`sm_121`) gotcha: anything past Ollama (vLLM, PyTorch) must come from NVIDIA NGC containers `26.01+`. Random pip wheels will not have the right CUDA arch.
-
----
-
-## 10. Hardware checkout
-
-### From ASUS lending
-- ZenScreen MB169CK-P ×1 — sim canvas at hand height
-- Ascent GX10 ×1 — local inference
-
-### From the HackMIT hub — actually received (Sat 19 Sep, table 55)
-
-Most of the inventory was taken within minutes. This is what we hold, re-counted Sat afternoon after the second pickup:
-
-- **Compute:** ASUS Ascent GX10 ×1, Arduino UNO Q 4GB ×1 (not usable as WebSerial MCU, see §8)
-- **Sensors:** VL53L1X ×3 packages (2-packs → up to 6 units), Adafruit BNO055 ×1 (*confirm still in hand — not in the afternoon recount*), HC-SR04 ×5 (unused), Arducam Mini ×1 (unused), HuskyLens ×1 (unused)
-- **Displays:** wisecoco 7 in. HDMI IPS touchscreen ×1 (**the sim canvas** — plugs into the GX10, see §9), UGREEN micro-HDMI→HDMI ×1, ASUS ZenScreen ×1 (*confirm still in hand*)
-- **Wiring/power:** mini breadboards, jumper wires (50+ assorted), WAGO 221 lever nuts, Arduino USB-C cable, micro-USB data cable, USB-C-to-A adapters, COOLM 5 V 4 A supply, electrical tape, velcro
-- **Tools:** Neoteck multimeter, **soldering iron** (headers for the L1X/BNO055 — still use the staffed hot-work bench, see Notes)
-- **Peripherals:** Logitech C270 HD webcam ×1, wired keyboard, mouse — these three double as the GX10 first-boot kit
-- **Extras, probably unused:** MG996R + SG90 servos, buzzers, coin vibration motors (haptics bonus only)
-
-**Still to get:** ESP-WROOM-32 (P0, 7 left at last check) + ESP32-S3-DevKitC spare; MOSFET PWM switch module only if we do haptics.
-**Out of stock, worked around:** powered USB hub (GX10 has enough USB for webcam + ESP32), Qwiic cables (jumpers, keep the IMU lead < 30 cm), DRV2605L (MOSFET module instead), VL53L7CX (dropped, see §8).
-**No longer needed:** Cat6 to the laptop and a laptop Ethernet adapter — the demo runs on the GX10 (§9).
-
-### Bring ourselves
-- Laptops and chargers
-- Tripod or clamp for the webcam (no good mount in inventory)
-- Printed problems, clean contrast, no glare
-- Phone for capture and the demo video
-
-### Notes
-- **There is no projector in the 2026 inventory.** Table projection is off unless someone brought one.
-- Power strips are deployed by HackMIT staff only. Ask at your table, don't bring your own.
-- Soldering is restricted to the staffed hot-work bench with safety glasses. We hold an iron from the hub; still do the header work at the bench.
+- Camera access and tracking performance while local extraction runs.
+- Both displays and touch mapping together.
+- Controller-to-simulation synchronization and camera mode switching.
+- A complete run with no hosted API key and with required model assets already available locally.
 
 ---
 
-## 11. Scope tiers
+## 10. Hardware checklist
 
-### Tier 0 — must work, hour 6
-Webcam, MediaPipe, hand as a paddle in a Matter.js scene, pinch to grab, release to throw. Live velocity and force vectors, energy bars, v–t graph, equation panel updating in real time.
+### Required for the active demo
 
-**If Tier 0 works and nothing else does, we still demo well.** This is the floor and it is not negotiable.
+| Item | Role | Status / next action |
+|---|---|---|
+| ASUS Ascent GX10 and supply | Runs all models and app | Claude has configured the box |
+| ASUS portable monitor and cables | Simulation display | User confirms target display; verify exact model, inputs and power |
+| 7-inch touchscreen and cables | Capture/menu controller | In hand; verify video, power and touch data |
+| Logitech C270 USB webcam | Photo capture and hand tracking | Previously inventoried; connect and test both uses |
+| Wired keyboard and mouse | Setup / recovery | In hand |
+| Suitable display adapters and USB cables | Connect both screens and camera | Confirm against actual ports; dual-display route unverified |
+| Stand/clamp and cable restraint | Stable camera and display placement | Assemble and mark a repeatable page/hand position |
 
-### Tier 1 — hour 14
-All four problem types. Photo to spec via the GX10. Derivation panel with real substituted numbers. three.js 3D hand rendering. Predicted trajectory drawn over the simulated motion.
+### Set aside from earlier inventory
 
-### Tier 2 — start only if Tier 0 is solid, hard stop hour 16
-ToF depth fusion. BNO055 orientation and hand-tilted ramps. The live "why did that happen?" query.
+VL53L1X packages, BNO055, ESP32/UNO Q, breadboards, jumper wires, WAGOs, servos, buzzers, vibration motors and soldering tools are not required. Do not spend demo time acquiring or wiring them.
 
-### Cut, and staying cut
-Haptic glove. Thermal camera. Fifteen problem types. The 33-concept electromagnetism list. Chained sandbox systems. Generated CAD and STL export. Table projection. DimensionalOS.
+### Documents
 
-These are the "what's next" slide. Framing them that way is a strength.
+`HackMIT_2026_Hardware_Checkout.docx` is the team's updated setup checklist. `HackMIT 2026 Hardware List.pdf` is the organizer's original inventory catalog; keep it unchanged as a reference, not a list of project requirements.
+
+---
+
+## 11. Scope and acceptance
+
+### First working milestone
+
+GX10 runs the webcam tracker and one simulation on the ASUS display. A visitor can grab and release an object reliably; losing tracking does not fling it unexpectedly. Keep mouse controls available for development and recovery.
+
+### Initial complete demo
+
+The 7-inch touchscreen offers Take a picture. The webcam captures a printed problem, local GX10 inference produces a valid spec for one of the four types, and the ASUS monitor loads the corresponding simulation. The visitor then interacts using webcam-tracked hands. Show clear loading, retake and error states.
+
+### Required verification
+
+Test one real printed example of each type; exercise capture-to-hand switching, retries, tracking loss, touch alignment and both displays after restart. Record local backend provenance. Check tracking responsiveness during extraction and confirm models/assets are available without downloading during the presentation.
+
+### Deferred
+
+Depth sensing, sensor fusion, IMUs, ESP32 firmware, serial integration, haptics, physical actuators, mandatory 3D rendering and live explanation chat. Extra engine types and sandbox remain existing capabilities outside the initial demo scope.
 
 ---
 
 ## 12. Failure ladder
 
-Decide the floor now, not at 4 AM.
-
-1. Full stack: photo → GX10 → sim → ToF-fused 3D hand → live derivation
-2. No ToF: MediaPipe 2D hand only, depth threshold faked from hand size
-3. No GX10: laptop runs the browser, hosted API for inference, same pipeline
-4. No photo ingest: manual problem-type picker with sliders, sim still works
-5. Floor: Tier 0, one problem type, hand pushing a ball
-
-Every rung is still a demo. Nothing below rung 5 ships.
+1. Full demo: touchscreen capture -> local GX10 extraction -> ASUS simulation -> webcam hand interaction.
+2. Unreadable photo or extraction failure: retake, or manually select one of four prepared problems on GX10.
+3. Tracking unavailable: keep the current simulation and use mouse/touch controls for recovery; clearly identify that hand interaction is unavailable.
+4. Two-display setup fails: use a combined controller/simulation view on one working display for recovery; this does not satisfy final two-display acceptance.
+5. GX10 unavailable: use a recorded demo as presentation backup. Laptop/hosted execution would be an explicitly different deployment, not proof of the agreed all-local design.
 
 ---
 
@@ -437,9 +304,9 @@ Every rung is still a demo. Nothing below rung 5 ships.
 | Person | Owns |
 |---|---|
 | CV / interaction | MediaPipe, hand-to-physics coupling, grab and release gesture states |
-| Physics / render | Matter.js sims, four problem types, three.js scene, overlays |
-| Model pipeline | GX10 endpoint, image to spec, derivation generation, KaTeX panel |
-| Rig / pitch (David) | Sensors and firmware, table setup, UX polish, demo video, pitch, submission |
+| Physics / render | Matter.js sims, four demo problem types, ASUS display, overlays |
+| Model pipeline | Local GX10 extraction, validation, loading/errors, integration with existing derivations |
+| Rig / pitch (Davide) | Two displays, touch mapping, camera mounting and lighting, table setup, demo video, pitch, submission |
 
 The fourth role is not the lesser role. At a three-minute expo slot, whoever owns the story and the physical setup is doing load-bearing work.
 
@@ -452,11 +319,11 @@ Clock times follow the 2025 schedule; confirm at opening ceremony.
 | When | What |
 |---|---|
 | Hour 0–1 | Freeze scope. Write the JSON spec. Agree interfaces. |
-| Hour 6 | **Checkpoint:** hand pushes ball, vectors live. Not working means cut Tier 1 until it is. |
+| Next checkpoint | Webcam hand interacts with one simulation on the ASUS display, running on GX10. |
 | Hour 12 | From here, `main` always demos. No exceptions. |
 | Hour 12–18 | Sleep in shifts, two and two. Non-negotiable. |
 | Sat night | Two strangers try it. Film their reaction. Feeds the Learning and Collaboration third of the rubric. |
-| Hour 16 | Tier 2 hard stop. |
+| Before freeze | Touchscreen capture loads all four problem types; test both displays and hand reacquisition. |
 | Hour 18 | **Feature freeze.** Record the 90-second demo video as insurance. |
 | Hour 20–23 | Rehearse the pitch five times out loud. Set up the table. Test under actual room lights. |
 | Sun ~11:15 | Submit, 30 min early. Submission systems fall over at the deadline. |
@@ -469,8 +336,8 @@ Clock times follow the 2025 schedule; confirm at opening ceremony.
 
 1. **Open with the hand, not a slide.** Push the ball, let the judge watch the vector follow your palm. Ten seconds, no narration.
 2. **Name the problem.** Students read a static diagram and have to run the simulation in their heads. That is where intro mechanics loses people.
-3. **Show photo to sim.** Snap a textbook problem, the scene assembles, point at the derivation matching the motion.
-4. **Hand the judge the controls.** Let them tilt the ramp and watch both the animation and the equations move. A judge who touches it remembers it.
+3. **Show photo to sim.** Tap Take a picture on the 7-inch menu, capture a printed problem, then point to the simulation and derivation on the ASUS display.
+4. **Hand the judge the controls.** Let them grab and release the projectile and watch its motion and graphs. A judge who touches it remembers it.
 5. **Name LivePhys yourself**, explain what the hand adds, and close on what's next.
 
 Rehearse this. Five times, out loud, to a person. The pitch is a deliverable, not an afterthought.
@@ -486,7 +353,7 @@ Rehearse this. Five times, out loud, to a person. The pitch is a deliverable, no
 - Most Creative — strong fit
 - Best UX — strong fit
 - ASUS "Build What's Next" — real, because inference genuinely runs on the GX10
-- Best Use of Hardware — only if the sensor rig actually works. Do not claim hardware on the strength of a webcam.
+- Hardware awards are not a reason to restore sensors; describe the GX10, webcam and two-display interaction accurately, and verify current eligibility separately.
 
 Do not add a sponsor dependency purely to qualify for a prize. Judges can tell, and it is how good projects die at 4 AM.
 
@@ -496,16 +363,17 @@ Do not add a sponsor dependency purely to qualify for a prize. Judges can tell, 
 
 HackMIT operates on an honor code. No project work before hacking starts, and any borrowed code must be disclosed. Teams have been disqualified in the past both for presenting others' demo material as their own and for resubmitting a project from a previous hackathon.
 
-Practically: list MediaPipe, Matter.js, three.js, KaTeX and any sensor libraries in the README with versions. Cite LivePhys in the submission. Being explicit costs nothing and protects us.
+Practically: list MediaPipe, Matter.js, three.js, KaTeX and the actual hand-tracking model in the README with versions. Cite LivePhys in the submission. Being explicit costs nothing and protects us.
 
 ---
 
 ## 18. Open questions
 
-- Whether the BNO055 goes on the hand (orientation, torque demos) or the ramp (tilt control). Hand is the better demo; ramp is the easier build.
-- Whether the BNO055 and ZenScreen are still physically in hand (missing from the Sat afternoon recount)
-- Whether Chromium on the GX10 gets GPU-accelerated WebGL for three.js + MediaPipe, or we are on the WASM/CPU path. Test in hour 1.
-- Confirm 2026 tracks and challenge list at the opening ceremony; everything above assumes 2025 repeats
+- Exact ASUS portable monitor model and its input/power ports; simultaneous display wiring and adapters on GX10.
+- Final webcam placement for readable pages and comfortable hand interaction with the same camera.
+- Hand-tracking implementation location, runtime and measured GX10 performance; MediaPipe remains the documented integration target until the actual model is confirmed.
+- Controller/display view routes and shared-state mechanism; these are not implemented by this docs update.
+- Confirm current event deadlines and challenge eligibility; older schedule/prize notes above are provisional.
 
 ---
 

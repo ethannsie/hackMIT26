@@ -2,6 +2,17 @@
 
 What this system can simulate, what it refuses, and how accurate it is.
 
+**Demo scope (September 19 pivot):** the initial experience exposes projectile,
+inclined plane, pendulum and 1D collision, confirmed September 19. The 7-inch
+touchscreen controls webcam photo capture; the ASUS portable monitor shows the simulation. All models run on GX10. Hand input is webcam-only,
+with no external depth sensors or microcontrollers.
+
+This document describes the **existing engine**, including extra types and
+sandbox features outside that initial scope. Current controls below are mouse
+and keyboard controls. The actual webcam adapter, touchscreen menu, four-type
+menu restriction and shared two-display session still need implementation and
+hardware testing.
+
 Two modes. **Problem mode** solves a specific problem and shows its derivation.
 **Sandbox mode** lets components be placed together and interact. They share the
 solver and the determinism guarantees; they differ in what the side panel can
@@ -28,8 +39,9 @@ photo ──► compress ──► extract ──► validate ──► simulate
 
 Three ways in, all producing the same `ProblemSpec`:
 
-1. **Photograph a problem.** Compressed in-browser, extracted by a vision model
-   under a strict JSON schema at temperature 0.
+1. **Supply a problem image.** Existing ingest compresses it in-browser and
+   extracts a spec with a vision model and JSON schema. The planned touchscreen
+   Take a picture action will capture this image from the webcam on GX10.
 2. **Pick a type and drag sliders.** No model, no network, no API key. This is a
    complete demo on its own.
 3. **Hand-written spec.** Any `ProblemSpec` JSON drives the sim directly.
@@ -386,10 +398,9 @@ the student's, the system says so.
 - `tension_n` is in the `Askable` enum but no solver produces it — a leftover
   from sketching Atwood. Degrades gracefully (falls back to all solutions for
   that type) but should either be implemented or removed.
-- The ramp-tilt gesture is specified but not yet wired to hand orientation;
-  the ramp angle is slider-driven today.
-- The renderer is 2D canvas. The three.js scene with the articulated hand is
-  the tracking side's surface and is not in this half yet.
+- Ramp angle is slider-driven today; webcam ramp tilt is deferred.
+- The renderer is 2D canvas, sufficient for the initial demo. A three.js scene
+  is deferred. Webcam tracking and the two-display controller remain to integrate.
 - Motion graphs plot one body at a time.
 - Rotating-frame accuracy is verified over 400 steps. The centrifugal term grows
   with radius, so very long runs will drift — physically correct, but the

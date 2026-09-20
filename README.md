@@ -1,70 +1,233 @@
-# HackMIT hand-physics prototype
+# IRL Physics Sim
 
-A webcam-first prototype for the planned physics interaction:
+Tap **Take a picture** on the **7-inch touchscreen**, capture a physics problem
+with the **USB webcam**, then interact with its simulation on the larger
+**ASUS portable monitor** using webcam-tracked hands.
 
-- index fingertip is the precise cursor;
-- thumb + index pinch grabs a ball;
-- an open palm acts as a larger, soft collider that pushes the ball;
-- a hand-colored virtual avatar with a palm, rounded fingers, and wrist follows the tracked hand;
-- landmarks are smoothed and the gesture needs three frames to change state.
+**All models run on the ASUS Ascent GX10**, which also hosts the app and
+simulation. The webcam serves both photo capture and hand tracking. No depth
+sensor, IMU or serial bridge is required; the one microcontroller is an
+ESP32-S3 driving the camera ring light over MQTT
+([hackmit_camera_light/](hackmit_camera_light/README.md)).
 
-## The demo box
+The initial demo covers **projectile, inclined plane, pendulum and 1D collision**
+(confirmed September 19). The engine already contains nine
+problem types and a sandbox; those additional capabilities are not part of the
+initial touchscreen menu scope.
 
-On the GX10 the touchscreen controls live in [`panel/`](panel/README.md) —
-scan, hand overlay and shutdown on the 7 in. second display. That service owns
-the webcam, so run it instead of this standalone demo when both would want the
-camera.
+**Implementation status (Sat 19 Sep evening):** solver, derivations, graphs,
+extraction API, the touchscreen menu ([panel/](panel/README.md): scan, hand
+overlay, shutdown), webcam hand tracking into the sim, the ring light and the
+one-icon two-display launch on the GX10 ([gx10/](gx10/README.md)) all exist
+and have run on the real hardware. Still open: a full rehearsal with printed
+problems, and the GX10 hosting its own Wi-Fi so the ring light needs no phone.
+
+- [Build plan](hackmit-2026-plan.md): architecture, scope and acceptance.
+- [GX10 guide](gx10/README.md): local inference and hardware setup.
+- [Capabilities](CAPABILITIES.md): existing engine behavior and limitations.
+- [Hardware checklist](HackMIT_2026_Hardware_Checkout.docx): active rig.
+- [Organizer inventory](HackMIT%202026%20Hardware%20List.pdf): original reference catalog, not project requirements.
 
 ## Run it
 
-Use Python 3.10 or newer, then install the packages, download the official
-MediaPipe hand model once, and run the demo:
-
-```powershell
-python -m pip install -r requirements.txt
-Invoke-WebRequest -Uri "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task" -OutFile "hand_landmarker.task"
-python hand_physics_demo.py
+```bash
+npm install
+cp .env.example .env      # GX10 local Ollama settings; see gx10/README.md
+npm run dev               # web app on :5173, extract API on :8787
 ```
 
-Run all three commands from this project folder. The model is kept next to the
-Python file; it is required by the current MediaPipe Tasks API.
+Two other commands matter:
 
-To drive the browser physics engine with the webcam demo, start the web app,
-open `http://localhost:5173/`, and then run the Python command in a
-second terminal. The Python process publishes the latest hand pose to the local
-API and stays headless, so the browser is the single visible physics screen.
-Pinch grabs and throws movable bodies, while an open palm pushes them in both
-problem and sandbox modes. Add `--preview` to the Python command if you also
-want the old OpenCV camera window. Without `?hand=python`, the browser keeps
-its mouse interaction. Add `?hand=mouse` to the URL to explicitly use the
-mouse source instead.
+```bash
+npm run verify            # problem library, against the closed forms
+npm run verify:sandbox    # sandbox, against the conservation laws
+npm run verify:all        # both
+npm run check             # typecheck
+```
 
-With `--preview`, press `R` to reset and `Q` or `Esc` to exit. Without the
-preview, stop the Python process with `Ctrl+C` in its terminal.
+Open `#sandbox` in the URL to go straight into sandbox mode. Press `?` in the
+app for keyboard shortcuts.
 
-## If grabbing releases during a fast motion
+**Run `npm run verify:all` before every push.** 41 + 16 checks, worst case
+0.58%. It is the only thing standing between us and demoing wrong physics to a
+judge — it has already caught a pendulum that silently decayed, a magnetic orbit
+that gained 2175% speed, and bodies falling off the end of the floor.
 
-The demo deliberately keeps a grab active through a 0.22-second hand-tracker
-dropout and requires six consecutive open-pinch frames to release. Adjust the
-constants near the top of `hand_physics_demo.py`:
+The GX10 local extraction path needs no OpenAI key. If extraction is unavailable,
+pick a prepared problem and use the sliders. Hosted OpenAI support remains in
+code for development, but the agreed demo runs all models locally.
 
-- raise `TRACKING_GRACE_SECONDS` to tolerate longer tracking dropouts;
-- raise `PINCH_RELEASE_RATIO` to require a wider thumb-index gap before release;
-- raise `RELEASE_CONFIRM_FRAMES` to make release take longer.
+---
 
-Those changes make grabbing more forgiving, but too large a value makes an
-intentional release feel delayed.
+## The two contracts
 
-## Why these hand points
+Everything else is negotiable. These two are not — they are how we work in
+parallel without blocking each other.
 
-The index fingertip is an explicit, precise control point. The palm center is
-the median of wrist plus the four knuckle landmarks, not an average of all
-landmarks, so bending fingers does not shift the palm collider. A three-frame
-gesture debounce prevents a one-frame tracker wobble from grabbing/releasing.
+### 1. `ProblemSpec` — [src/spec/types.ts](src/spec/types.ts)
 
-## Add the VL53L7CX next
+Between EXTRACT and BUILD. A flat, strict, all-units-in-the-name JSON object.
+Frozen after hour 4; do not rename a field without telling everyone.
 
-`depth_at_cursor_mm()` is intentionally a small empty adapter. After mounting
-the camera and ToF sensor together, calibrate camera pixels to the sensor's
-8x8 cells and return the measured depth for the cursor cell. Gate true contact
-or a virtual wall by that depth; do not rely on MediaPipe's relative z value.
+One deviation from the draft in the plan doc: the ramp angle is
+`incline_angle_deg` and the projectile launch angle is `launch_angle_deg`.
+The draft called both `angle_deg`, which collides in a flat object.
+
+### 2. `HandFrame` — [src/hand/types.ts](src/hand/types.ts)
+
+Between TRACK and INTERACT. **If you are doing MediaPipe, this is your output
+type and it is the only thing you need from the sim side.**
+
+```ts
+interface HandFrame {
+  t_ms: number                     // performance.now() at capture
+  handedness: 'left' | 'right'
+  confidence: number
+  palm_m: Vec3                     // sim frame, metres
+  palm_velocity_ms: Vec3           // m/s — this is where a throw's speed comes from
+  landmarks_m?: Vec3[]             // 21 points, for rendering only
+  pinch: number                    // 0 open .. 1 closed
+  palm_normal?: Vec3
+}
+```
+
+Coordinate frame is the **sim's**, not the camera's: `+x` right, `+y` **up**,
+`+z` toward the viewer, origin at the centre of the sim plane. Converting out of
+MediaPipe's normalised image coordinates is the tracking side's job, so the sim
+never has to know a camera exists.
+
+Implement `HandSource` (`current()`, `start()`, `stop()`) and we swap it in for
+the mock at one line in [src/main.ts](src/main.ts). Until then
+[src/hand/mock.ts](src/hand/mock.ts) drives the same interface from the mouse,
+so both halves are testable today.
+
+The existing coupling in [src/hand/coupling.ts](src/hand/coupling.ts) accepts
+synthetic plane penetration for push and pinch for grab/release. For the
+webcam-only demo, define image-plane or gesture-based contact and map it into
+this interface; no physical depth stream is required. Velocity is in simulation
+units after camera-to-scene mapping. Tracking loss and capture mode must clear
+interaction safely.
+
+---
+
+## How the sim stays honest
+
+Two properties we are protecting, both enforced by `npm run verify`.
+
+**It is deterministic.** Physics only ever advances through `SimWorld.step()`,
+which uses a fixed 8.333 ms timestep. Nothing reads a `requestAnimationFrame`
+delta. The render loop converts wall-clock time into a whole number of fixed
+steps, so a dropped frame produces the same trajectory as a smooth one. Same
+spec plus same step count gives a bit-identical result on any machine.
+
+**It agrees with the derivation panel.** A student reads the animation and the
+algebra side by side, so the two must never disagree.
+[src/sim/analytic.ts](src/sim/analytic.ts) holds the closed forms, and
+`verify-sims.ts` runs the engine against them. Current worst case is 0.58%.
+
+### Where Matter.js needed replacing
+
+Two of its contact models are not accurate enough to put in front of a student,
+so [src/sim/corrections.ts](src/sim/corrections.ts) substitutes the textbook
+model. Measured, not guessed:
+
+| Case | Matter alone | With corrections |
+|---|---|---|
+| Frictionless incline | exact | unchanged |
+| Incline, μ = 0.05 | a = 0.008 vs 3.701 expected — block pins | exact |
+| Rolling sphere | 95% of sliding value, should be 5/7 | 0.27% |
+| Collision, e = 0 | exact | unchanged |
+| Collision, e = 1 | 0.375 / 1.625 instead of 0 / 2 | exact |
+| Magnetic orbit | speed +2175%, orbit 23× over one run | 0.000% drift |
+| Uniform circular | 38% speed swing per orbit | 0.00% |
+
+Matter's friction is a damping model rather than Coulomb, and its restitution is
+under-applied as e approaches 1. Applying the Lorentz force explicitly is Euler
+on a rotation, which is unconditionally unstable — fatal for the one sim whose
+point is that a magnetic field cannot change a particle's speed; that one uses a
+Boris-style velocity rotation instead. Everything else — contacts, geometry, and
+every hand-driven interaction — still goes through Matter.
+
+Two traps worth knowing if you touch this code:
+
+- **Matter's velocity unit is per `_baseDelta` (1/60 s), not per second and not
+  per our timestep.** Using our timestep silently halves every launch speed.
+- **Mid-`Engine.update` (inside a `collisionStart` handler) `body.velocity` is
+  still raw per-step displacement**, not normalised. Reading it there halves the
+  momentum you transfer. Capture velocities in `preStep` instead.
+
+Both cost real debugging time. Both are caught by `npm run verify`.
+
+---
+
+## Ingest
+
+1. **Compress in the browser** — [src/extract/compress.ts](src/extract/compress.ts).
+   Long edge to 1024px, JPEG q0.72. A 4 MB phone photo becomes under 200 KB with
+   no loss in extraction quality on printed text. Vision models tile at 512px, so
+   detail beyond that is paid for and discarded.
+
+2. **Extract** — [server/index.ts](server/index.ts). The key lives only in this
+   process; Vite proxies `/api` to it so the browser never holds a credential.
+   Uses the same prompt and JSON schema for local Ollama and the existing
+   hosted path. On GX10 set `EXTRACT_LOCAL_URL=http://localhost:11434/v1`,
+   `EXTRACT_LOCAL_MODEL=qwen3.8` and `EXTRACT_LOCAL_TIMEOUT_MS=45000`. Leave
+   `OPENAI_API_KEY` unset for the all-local demo. A tested local extraction took
+   about 28 seconds; the new touchscreen flow needs loading and retry states.
+
+3. **Validate** — [src/spec/validate.ts](src/spec/validate.ts). Structured
+   outputs guarantee shape, never physics. This clamps implausible values,
+   forces `interactable: false` on ramps and walls, rejects specs missing a
+   field the type cannot run without, and **surfaces every repair in the UI** —
+   if a number on screen is not the student's, we say so.
+
+Test the whole path against a real image:
+
+```bash
+npx tsx scripts/e2e.ts path/to/problem.jpg     # uses configured extraction backend
+```
+
+---
+
+## Layout
+
+```
+src/spec/        the ProblemSpec contract, JSON schema, validator
+src/sim/         params -> scene -> deterministic world; closed forms; corrections
+                 nine problem types — see CAPABILITIES.md
+src/hand/        the HandFrame contract, mouse mock, hand->force coupling
+src/extract/     browser-side compression and API client
+src/render/      canvas views, KaTeX derivation panel, motion graphs
+src/history.ts   rollback buffer (snapshots are spec + step count)
+server/          extraction API and the extraction prompt
+scripts/         verify-sims.ts (run this), e2e.ts
+```
+
+The canvas renderer is deliberately not three.js. It draws the solver's actual
+state, so when the animation and the derivation disagree we can see which one is
+lying. It is sufficient for the initial demo; a three.js scene is not required.
+
+## Third-party
+
+Disclosed per the HackMIT honour code (plan §17):
+matter-js 0.20, three 0.169, katex 0.16, openai 4.73, vite 5.4, express 4.21.
+Approach follows LivePhys (arXiv:2607.20990) for the scan-to-spec stage.
+
+## Standalone webcam demo
+
+`hand_physics_demo.py` is the original webcam-first prototype: index fingertip
+as cursor, thumb + index pinch to grab, open palm as a soft pusher, with a
+drawn hand avatar. On the demo box the [panel](panel/README.md) owns the
+camera, so run this only on a laptop. Python 3.10+:
+
+```bash
+python3 -m pip install -r requirements.txt
+curl -fLo hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
+python3 hand_physics_demo.py            # --preview for the OpenCV window
+```
+
+With the web app open it posts poses to `/api/hand/frame` and the browser
+(`?hand=python`) drives the sim from them; without it the browser keeps the
+mouse (`?hand=mouse` forces it). It holds a grab through a 0.22 s tracker
+dropout and needs six open frames to release — constants at the top of the
+file. `depth_at_cursor_mm()` is an empty adapter left for a depth sensor.

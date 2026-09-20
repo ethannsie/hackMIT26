@@ -25,12 +25,14 @@ import {
   RAD,
 } from '../sim/units.ts'
 import { DEFAULT_ARENA, isStaticKind, type Entity, type SandboxScene } from './types.ts'
+import { containBody, clampBodyCentre, type PxBox } from '../sim/contain.ts'
 import type { ForceVector } from '../sim/fbd.ts'
 
 const { Engine, Composite, Bodies, Body } = Matter
 
 const FORCE_N_TO_MATTER = PX_PER_M / 1e6
-const GROUND_THICKNESS_PX = 40
+/** 1 m of slab: thinner than one step of fast travel and Matter never sees the hit. */
+const GROUND_THICKNESS_PX = 200
 
 export interface SandboxBodyState {
   id: string
@@ -295,6 +297,32 @@ export class SandboxWorld {
     }
   }
 
+  /**
+   * The box no movable component may leave, in Matter px (y down). Walled
+   * arenas close all three sides; the floor closes the bottom. An open arena
+   * without a floor leaves everything to the escape net, by design.
+   */
+  private containBox(): PxBox {
+    const { width_m: W, height_m: H, walls } = this.scene.arena
+    return {
+      minX: walls ? -mToPx(W / 2) : -Infinity,
+      maxX: walls ? mToPx(W / 2) : Infinity,
+      top: walls ? -mToPx(H) : -Infinity,
+      bottom: this.scene.ground ? 0 : Infinity,
+    }
+  }
+
+  private containBodies(): void {
+    const box = this.containBox()
+    for (const b of this.built) {
+      if (!b.main) continue
+      // The bob's position is the integrator's, not Matter's; clamping it
+      // would fight the rod. Its swing circle keeps it in the arena anyway.
+      if (b.entity.kind === 'pendulum') continue
+      containBody(b.main, box)
+    }
+  }
+
   /** Bodies the hand is allowed to push. */
   get interactableIds(): string[] {
     return this.built
@@ -473,6 +501,7 @@ export class SandboxWorld {
     }
 
     this.enforceEscapeNet()
+    this.containBodies()
     for (const b of this.built) {
       if (!b.main || b.main.isStatic) continue
       const prior = before.get(b.entity.id)
@@ -667,7 +696,9 @@ export class SandboxWorld {
   setPositionM(id: string, p: [number, number]): void {
     const body = this.bodyById(id)
     if (!body || body.isStatic) return
-    Body.setPosition(body, { x: mToPx(p[0]), y: -mToPx(p[1]) })
+    // A grab is a teleport; clamp it so a hand cannot carry a body through a wall.
+    const [x, y] = clampBodyCentre(body, mToPx(p[0]), -mToPx(p[1]), this.containBox())
+    Body.setPosition(body, { x, y })
   }
 
   /** Metric state of every movable component. */

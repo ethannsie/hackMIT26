@@ -54,7 +54,13 @@ export const BORDER_PAD_M = 0.25
 /** Ids of the border walls, so renderers and pickers can treat them as scenery. */
 export const isWallId = (id: string): boolean => id.startsWith('wall_')
 
-const GROUND_THICKNESS_PX = 40
+/**
+ * Thick on purpose: Matter only sees a collision when shapes overlap at the
+ * end of a step, so anything thinner than one step of travel is invisible to
+ * a fast body. 1 m holds up to 120 m/s at 120 Hz. The renderer draws the
+ * floor's top face and the border line, never the slabs, so thickness is free.
+ */
+const GROUND_THICKNESS_PX = 200
 const WALL = { isStatic: true, friction: 0.6, restitution: 0.2 }
 
 /**

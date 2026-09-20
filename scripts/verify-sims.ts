@@ -417,6 +417,39 @@ console.log('\nANGULAR MOMENTUM ABOUT A POINT  straight-line motion, L must be n
   console.log(`  [${zero ? 'PASS' : 'FAIL'}] d = 0 gives L = 0: same motion, different origin, L = ${L0.toExponential(2)}`)
 }
 
+console.log('\nCONTAINMENT  nothing leaves the border, however fast it goes or where a hand drags it')
+{
+  const s = spec('projectile', { v0_ms: 8, launch_angle_deg: 40, h0_m: 0 })
+  const w = new SimWorld(s)
+  const b = w.bounds
+  const inside = (): boolean => {
+    const [x, y] = w.state().focus.position_m
+    const r = 0.06
+    return x >= b.minX_m - r - 1e-6 && x <= b.maxX_m + r + 1e-6 && y >= -r - 1e-6 && y <= b.maxY_m + r + 1e-6
+  }
+  // Well past what any wall thickness could stop at 120 Hz without help.
+  for (const v of [[55, 0], [-55, 10], [30, 55], [40, -55]] as const) {
+    w.reset()
+    w.setVelocityMs('projectile', [v[0], v[1]])
+    let ok_ = true
+    for (let i = 0; i < 600; i++) {
+      w.step()
+      if (!inside()) { ok_ = false; break }
+    }
+    const st = w.state().focus
+    const pass = ok_ && Number.isFinite(st.position_m[0]) && Number.isFinite(st.position_m[1])
+    if (!pass) failures++
+    console.log(`  [${pass ? 'PASS' : 'FAIL'}] thrown at (${v[0]}, ${v[1]}) m/s stays inside for 5 s  (ends at x=${st.position_m[0].toFixed(2)}, y=${st.position_m[1].toFixed(2)}, |v|=${st.speed_ms.toFixed(1)})`)
+  }
+  // A grab that tries to carry the ball through the wall lands on the inside face.
+  w.reset()
+  w.setPositionM('projectile', [b.maxX_m + 5, b.maxY_m + 5])
+  const held = w.state().focus.position_m
+  const clamped = inside()
+  if (!clamped) failures++
+  console.log(`  [${clamped ? 'PASS' : 'FAIL'}] grab target outside the border is clamped to (${held[0].toFixed(2)}, ${held[1].toFixed(2)})`)
+}
+
 console.log('\nDETERMINISM  identical spec, identical step count, two separate worlds')
 {
   const s = spec('projectile', { v0_ms: 13.7, launch_angle_deg: 37, h0_m: 1.5 })

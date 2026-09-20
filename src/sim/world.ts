@@ -23,6 +23,7 @@ import {
   RAD,
 } from './units.ts'
 import { buildScene, addToWorld, type BuiltScene, type ViewBox } from './builders.ts'
+import { containBody, clampBodyCentre, type PxBox } from './contain.ts'
 import { installCorrections, type Corrections } from './corrections.ts'
 import { toParams, type SimParams } from './params.ts'
 import { solveAsked, type Solution } from './analytic.ts'
@@ -182,6 +183,27 @@ export class SimWorld {
   }
 
   /**
+   * The box no movable body may leave, in Matter px (y down). The border
+   * walls on three sides; the floor's surface where there is a floor, else
+   * the bottom wall. See contain.ts for why the walls alone are not enough.
+   */
+  private containBox(): PxBox {
+    const b = this.scene.bounds
+    return {
+      minX: mToPx(b.minX_m),
+      maxX: mToPx(b.maxX_m),
+      top: -mToPx(b.maxY_m),
+      bottom: this.scene.byId['ground'] ? 0 : -mToPx(b.minY_m),
+    }
+  }
+
+  /** Put anything that got out (tunnelled, dragged, blew up) back inside. */
+  private containBodies(): void {
+    const box = this.containBox()
+    for (const body of Object.values(this.scene.byId)) containBody(body, box)
+  }
+
+  /**
    * Advance exactly one fixed step, with any external forces applied for the
    * duration of that step. Matter clears forces after each update, so callers
    * pass the force every step it should act, rather than once.
@@ -203,6 +225,7 @@ export class SimWorld {
     Engine.update(this.engine, FIXED_DT_MS)
     this.corrections.postStep?.()
     this.enforceEscapeNet()
+    this.containBodies()
     this.steps += 1
   }
 
@@ -258,7 +281,9 @@ export class SimWorld {
   setPositionM(id: string, p: [number, number]): void {
     const body = this.scene.byId[id]
     if (!body || body.isStatic) return
-    Body.setPosition(body, { x: mToPx(p[0]), y: -mToPx(p[1]) })
+    // A grab is a teleport; clamp it so a hand cannot carry a body through a wall.
+    const [x, y] = clampBodyCentre(body, mToPx(p[0]), -mToPx(p[1]), this.containBox())
+    Body.setPosition(body, { x, y })
   }
 
   /** Advance n fixed steps. Used by the verify script and any test. */

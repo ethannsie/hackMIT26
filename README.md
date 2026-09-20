@@ -29,7 +29,18 @@ python hand_physics_demo.py
 Run all three commands from this project folder. The model is kept next to the
 Python file; it is required by the current MediaPipe Tasks API.
 
-Press `R` to reset; press `Q` or `Esc` to exit.
+To drive the browser physics engine with the webcam demo, start the web app,
+open `http://localhost:5173/`, and then run the Python command in a
+second terminal. The Python process publishes the latest hand pose to the local
+API and stays headless, so the browser is the single visible physics screen.
+Pinch grabs and throws movable bodies, while an open palm pushes them in both
+problem and sandbox modes. Add `--preview` to the Python command if you also
+want the old OpenCV camera window. Without `?hand=python`, the browser keeps
+its mouse interaction. Add `?hand=mouse` to the URL to explicitly use the
+mouse source instead.
+
+With `--preview`, press `R` to reset and `Q` or `Esc` to exit. Without the
+preview, stop the Python process with `Ctrl+C` in its terminal.
 
 ## If grabbing releases during a fast motion
 

@@ -14,6 +14,7 @@ import { MotionCharts, MotionRecorder } from './render/charts.ts'
 import { HandCoupling, type CouplingState } from './hand/coupling.ts'
 import { MockHandSource } from './hand/mock.ts'
 import { RemoteHandSource } from './hand/remote.ts'
+import { HttpHandSource } from './hand/http.ts'
 import { PanelLink } from './panel/link.ts'
 import { extractFromImage } from './extract/client.ts'
 import { PRESETS, KNOBS } from './presets.ts'
@@ -24,6 +25,7 @@ import { forcesFor } from './sim/fbd.ts'
 import type { DrawOptions } from './render/canvas.ts'
 import type { Sample } from './render/charts.ts'
 import type { SandboxScene } from './sandbox/types.ts'
+import type { HandFrame } from './hand/types.ts'
 import { CONFIDENCE_FLOOR, PROBLEM_TYPES, type ProblemSpec, type ProblemType } from './spec/types.ts'
 
 const $ = <T extends HTMLElement>(sel: string): T => {
@@ -155,7 +157,7 @@ function refreshHistoryUi(): void {
   historyEl.value = ''
 }
 
-const hand = new MockHandSource({
+const mouseHand = new MockHandSource({
   element: canvas,
   metresPerPixel: 1 / view.pixelsPerMetre,
 })
@@ -169,10 +171,24 @@ const hand = new MockHandSource({
  * instant the camera stops producing. A laptop with no panel behaves exactly
  * as it did before.
  */
-const remoteHand = new RemoteHandSource({ base: `http://${window.location.hostname}:8770` })
+const panelHand = new RemoteHandSource({ base: `http://${window.location.hostname}:8770` })
 
-function handFrame() {
-  return remoteHand.current() ?? hand.current()
+/** The standalone tracker (`hand_physics_demo.py`) posting through the :8787 bridge. */
+const bridgeHand = new HttpHandSource(canvas, (clientX, clientY) =>
+  mode === 'sandbox' ? sandbox.handPoint(clientX, clientY) : view.toScene(clientX, clientY),
+)
+
+/** `?hand=mouse` ignores every tracker, for testing on a laptop with no camera. */
+const forceMouse = new URLSearchParams(window.location.search).get('hand') === 'mouse'
+let liveHand: HandFrame | null = null
+
+/** Panel camera first, then the bridge, then the mouse. */
+function handFrame(): HandFrame | null {
+  if (!forceMouse) {
+    const tracked = panelHand.current() ?? bridgeHand.current()
+    if (tracked) return tracked
+  }
+  return mouseHand.current()
 }
 
 /**
@@ -327,12 +343,12 @@ function setMode(next: Mode): void {
   void panelLink.setMode(inSandbox ? 'sandbox' : 'problem')
 
   if (inSandbox) {
-    hand.stop()
+    mouseHand.stop()
     sandbox.start()
     recordFrame()
   } else {
     sandbox.stop()
-    void hand.start()
+    void mouseHand.start()
     recordFrame()
     setStatus('drag to push · hold shift to grab and throw · space pauses')
   }
@@ -661,17 +677,30 @@ function frame(nowMs: number): void {
   if (mode === 'sandbox') {
     sandbox.lastPaths = paths
     sandbox.showForces = showForces
-    sandbox.frame(elapsed, running)
+    liveHand = handFrame()
+    sandbox.frame(elapsed, running, liveHand)
     if (running) {
       recordFrame()
       sampleMotion()
     }
   } else {
+    liveHand = handFrame()
+    if (!liveHand) {
+      lastCoupling = {
+        contact: false,
+        penetration_m: 0,
+        grabbedId: null,
+        contactPoint_m: null,
+        force: null,
+      }
+    }
     if (running) {
       world.advanceWith(elapsed, () => {
-        lastCoupling = coupling.update(world, handFrame())
+        liveHand = handFrame()
+        lastCoupling = coupling.update(world, liveHand)
         return lastCoupling.force ? [lastCoupling.force] : []
       })
+      if (lastCoupling.contact) lastCoupling = coupling.update(world, liveHand)
       recordFrame()
       sampleMotion()
     }
@@ -684,6 +713,7 @@ function frame(nowMs: number): void {
       paths,
       forces: showForces && activeState ? forcesFor(world.params, activeState) : [],
       showForces,
+      hand: liveHand,
     }
     view.draw(world, st, lastCoupling, opts)
 
@@ -703,9 +733,12 @@ function frame(nowMs: number): void {
   requestAnimationFrame(frame)
 }
 
-// Optional accessory: both of these no-op if the panel service is not running.
+// Optional accessories: all of these no-op if their service is not running.
 panelLink.connect()
-void remoteHand.start()
+if (!forceMouse) {
+  void panelHand.start()
+  void bridgeHand.start()
+}
 
 load(spec)
 refreshHistoryUi()

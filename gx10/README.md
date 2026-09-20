@@ -43,9 +43,30 @@ bash gx10/install-demo.sh   # app level: npm deps, .venv with mediapipe, hand mo
 
 `demo.sh` reads `xrandr`: the largest monitor gets the sim, the smallest gets
 the panel. With one monitor the sim is full-screen and the panel opens as a
-window on top. If a USB touchscreen is present it is mapped to the small
-monitor (`xinput map-to-output`) so touches land where the panel is. **The
-WiseCoco needs its USB cable, not just HDMI**, for touch to exist at all.
+window on top.
+
+### Touchscreen
+
+**The WiseCoco needs its USB cable into the GX10 (or its hub), not a wall
+charger**, for touch to exist at all: video is HDMI, touch + power are the USB.
+Once plugged in it enumerates as `27c0:0859 wch.cn TouchScreen`
+(`hid-multitouch`, plus a mouse-emulation interface) — no extra driver.
+
+By default X stretches its touch surface across the whole 2944×1080 virtual
+screen, so a tap on the 7 in. lands on the big monitor. Two fixes are in place:
+
+- **Persistent (GNOME/mutter):** the device is pinned to the 7 in. by its EDID
+  identity, applied automatically on login and replug:
+  ```bash
+  gsettings set org.gnome.desktop.peripherals.touchscreen:/org/gnome/desktop/peripherals/touchscreens/27c0:0859/ output "['TXD', 'Display', '00000000SL0']"
+  ```
+  (A different 7 in. panel has different EDID strings: `xrandr --props`,
+  decode the EDID, use vendor / product name / serial.)
+- **At launch:** `demo.sh` runs `xinput map-to-output <id> <smallest monitor>`
+  for every touch device it finds.
+
+Check with `xinput list-props <id> | grep Transformation`: identity means
+"whole screen"; mapped to HDMI-0 it reads `0.348, 0, 0, 0, 0.556, 0, 0, 0, 1`.
 
 ## Access
 

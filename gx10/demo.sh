@@ -111,13 +111,17 @@ echo "   app   → $big_name ${big_w}x${big_h} at +${big_x}+${big_y}"
 echo "   panel → $small_name ${small_w}x${small_h} at +${small_x}+${small_y}"
 
 # A USB touchscreen lands stretched across the whole X screen unless it is
-# mapped to the output it physically is. Best effort; nothing to do if no touch
-# device is plugged in (the WiseCoco needs its USB cable, not just HDMI).
+# mapped to the output it physically is. The WiseCoco's controller (wch.cn
+# 27c0:0859) shows up twice — a multitouch interface and a mouse-emulation
+# one — so match by name as well as by MT axes and map both. GNOME also holds
+# a persistent mapping for it (gx10/README.md, "Touchscreen"); this is the
+# belt to that brace, for a hub plugged in after login.
 if (( count >= 2 )); then
   for id in $(xinput list --id-only 2>/dev/null); do
-    if xinput list "$id" 2>/dev/null | grep -q "Abs MT Position X"; then
+    name=$(xinput list --name-only "$id" 2>/dev/null)
+    if [[ "$name" == *[Tt]ouch* ]] || xinput list "$id" 2>/dev/null | grep -q "Abs MT Position X"; then
       xinput map-to-output "$id" "$small_name" 2>/dev/null \
-        && echo "   touch: $(xinput list --name-only "$id") → $small_name"
+        && echo "   touch: $name (id $id) → $small_name"
     fi
   done
 fi

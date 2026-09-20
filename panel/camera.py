@@ -109,6 +109,13 @@ class HandReading:
     palm_velocity_ms: tuple[float, float, float]
     pinch: float
     landmarks_m: list[tuple[float, float, float]] = field(default_factory=list)
+    # The same points as fractions of the (mirrored) camera frame, 0..1, image
+    # y down. The metre frame above assumes a fixed width for the whole camera
+    # view (PANEL_SCENE_WIDTH_M), which cannot match a sim that zooms to fit
+    # each problem; the app maps these onto whatever it is currently showing,
+    # so the full camera frame is always the full canvas.
+    palm_n: tuple[float, float] = (0.5, 0.5)
+    landmarks_n: list[tuple[float, float]] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -123,6 +130,8 @@ class HandReading:
             },
             "pinch": self.pinch,
             "landmarks_m": [{"x": p[0], "y": p[1], "z": p[2]} for p in self.landmarks_m],
+            "palm_n": {"x": self.palm_n[0], "y": self.palm_n[1]},
+            "landmarks_n": [{"x": p[0], "y": p[1]} for p in self.landmarks_n],
         }
 
 
@@ -428,6 +437,8 @@ class CameraWorker:
             palm_velocity_ms=(vx, vy, 0.0),
             pinch=pinch,
             landmarks_m=landmarks_m,
+            palm_n=(float(palm_px[0]) / width, float(palm_px[1]) / height),
+            landmarks_n=[(float(p[0]) / width, float(p[1]) / height) for p in points],
         )
 
     # --- drawing -----------------------------------------------------------

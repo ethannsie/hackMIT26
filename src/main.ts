@@ -171,12 +171,20 @@ const mouseHand = new MockHandSource({
  * instant the camera stops producing. A laptop with no panel behaves exactly
  * as it did before.
  */
-const panelHand = new RemoteHandSource({ base: `http://${window.location.hostname}:8770` })
+/** Screen → scene for whichever view is live; both trackers map through it. */
+const screenToScene = (clientX: number, clientY: number): [number, number] =>
+  mode === 'sandbox' ? sandbox.handPoint(clientX, clientY) : view.toScene(clientX, clientY)
+
+const panelHand = new RemoteHandSource({
+  base: `http://${window.location.hostname}:8770`,
+  // The full camera frame is the full canvas, at whatever scale the view is
+  // showing — so the hand's reach matches the sim rather than a fixed 1.6 m.
+  element: canvas,
+  toScene: screenToScene,
+})
 
 /** The standalone tracker (`hand_physics_demo.py`) posting through the :8787 bridge. */
-const bridgeHand = new HttpHandSource(canvas, (clientX, clientY) =>
-  mode === 'sandbox' ? sandbox.handPoint(clientX, clientY) : view.toScene(clientX, clientY),
-)
+const bridgeHand = new HttpHandSource(canvas, screenToScene)
 
 /** `?hand=mouse` ignores every tracker, for testing on a laptop with no camera. */
 const forceMouse = new URLSearchParams(window.location.search).get('hand') === 'mouse'

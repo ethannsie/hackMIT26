@@ -11,7 +11,9 @@
     "check": "tsc --noEmit",
     "verify": "tsx scripts/verify-sims.ts",
     "verify:sandbox": "tsx scripts/verify-sandbox.ts",
-    "verify:all": "npm run verify && npm run verify:sandbox"
+    "verify:all": "npm run verify && npm run verify:sandbox",
+    "panel": "python3 panel/panel_server.py",
+    "panel:test": "python3 panel/test_panel.py"
   },
   "dependencies": {
     "katex": "^0.16.11",

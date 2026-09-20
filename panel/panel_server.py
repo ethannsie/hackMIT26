@@ -23,6 +23,8 @@ Environment:
   PANEL_CAMERA_FPS      30     the C270's maximum
   PANEL_CAMERA_DYNAMIC_FPS  0  1 lets auto-exposure drop the rate to 15 in dim light
   PANEL_SCENE_WIDTH_M   1.6    metres across the camera frame, for sim coords
+  PANEL_PINCH_CLOSED    0.2    tip gap / palm width that counts as fully pinched
+  PANEL_PINCH_OPEN      0.8    ... and as fully open; grab at 70 % of the way closed
   PANEL_CAPTURE_DIR     <repo>/captures
   PANEL_MODEL           path to hand_landmarker.task (auto-discovered otherwise)
   PANEL_SHUTDOWN_CMD    override the poweroff command (set to 'echo dry-run' to test)

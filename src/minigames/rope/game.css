@@ -1,0 +1,24 @@
+:host { all: initial; position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; background: #d6e5c4; font-family: ui-sans-serif, system-ui, sans-serif; color: #294d38; }
+* { box-sizing: border-box; }
+.theatre { position: relative; width: min(100vw, 160vh); height: min(100vh, 62.5vw); overflow: hidden; border-radius: 4px; }
+canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+header { position: absolute; top: 4%; left: 5.5%; right: 5.5%; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.brand { font-size: clamp(16px, 2.5vw, 32px); font-weight: 850; letter-spacing: -1.2px; }
+.brand small { display: block; font-size: clamp(8px, .85vw, 11px); letter-spacing: 2.5px; margin-top: 3px; font-weight: 650; opacity: .6; }
+.score { font-size: clamp(20px, 3vw, 38px); letter-spacing: 5px; color: #d8a329; text-shadow: 0 2px #fff7; }
+.level { background: #ffffff85; border: 1px solid #5b805c26; padding: 10px 20px; border-radius: 99px; font-size: clamp(10px, 1.2vw, 15px); font-weight: 700; }
+footer { position: absolute; left: 5.5%; right: 5.5%; bottom: 3%; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+button { border: 1px solid #426b4830; color: #315b42; background: #fff9; padding: 12px 22px; border-radius: 99px; font: 700 14px system-ui; min-height: 48px; cursor: pointer; }
+button:hover { background: #fff; }
+button:focus-visible { outline: 3px solid #267e56; outline-offset: 3px; }
+.source { position: absolute; right: 0; bottom: clamp(90px, 15vw, 192px); max-width: 28%; line-height: 1.5; border-radius: 18px; background: #fff8; padding: 10px 16px; font-size: clamp(10px, 1vw, 13px); }
+.source[data-live='true']::before { content: '● '; color: #368252; }
+.result { position: absolute; inset: 0; display: grid; place-items: center; background: #dbe9cc70; backdrop-filter: blur(5px); }
+.result[hidden] { display: none; }
+.card { width: min(440px, 75%); padding: 35px; background: #fffbed; border: 1px solid #fff; border-radius: 30px; text-align: center; box-shadow: 0 24px 100px #35583826; }
+.card h1 { font-size: clamp(25px, 3vw, 42px); margin: 6px 0 12px; letter-spacing: -1px; }
+.card p { font-size: 16px; line-height: 1.5; color: #688064; }
+.card .big-stars { font-size: 54px; color: #e6b13b; letter-spacing: 8px; }
+.card button { background: #315b42; color: #fffbed; border: 0; min-width: 160px; }
+.card .coming { font-size: 12px; margin-bottom: 0; }
+@media(max-width: 700px) { button { padding: 8px 14px; min-height: 40px; font-size: 12px; } .level { padding: 8px 12px; } .card { padding: 18px; } .card .big-stars { font-size: 30px; } }

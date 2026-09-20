@@ -1,0 +1,13 @@
+/* Five comfortable targets across the 1024×600 home screen. */
+.tiles { grid-template-columns: repeat(5, 1fr); }
+.tile.rope { border-color: #406c42; background: #15241b; }
+.tile.rope .tile-icon { color: #b3dc78; }
+.rope-intro { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; background: radial-gradient(ellipse at 50% 100%, #253822, #121b17); border: 1px solid #304332; border-radius: 16px; padding: 20px; }
+.rope-intro h1 { font-size: 38px; line-height: 1.1; color: #dcf0b6; margin: 0; }
+.rope-intro .eyebrow { color: #8eab80; font-size: 13px; letter-spacing: 2px; }
+.rope-intro p { margin: 0; color: #a5b99d; font-size: 17px; }
+#rope-stars { font-size: 56px; line-height: 1.1; color: #efc259; letter-spacing: 10px; }
+#rope-status { max-width: 620px; min-height: 48px; font-size: 16px; }
+.rope-levels { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #8eab80; }
+.rope-levels span { padding: 6px 12px; border: 1px solid #384736; border-radius: 8px; opacity: .5; }
+.rope-levels span:first-child { background: #d5eeb0; color: #284330; opacity: 1; }

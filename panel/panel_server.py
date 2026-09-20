@@ -59,6 +59,7 @@ import cv2
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from camera import CameraWorker  # noqa: E402
 from light import ScanLight  # noqa: E402
+from rope_game import rope_game  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 UI_DIR = HERE / "ui"
@@ -158,6 +159,8 @@ class PanelState:
     # --- derived -----------------------------------------------------------
 
     def hand_wanted(self) -> bool:
+        if self.view == "rope":
+            return True  # Explicit game selection owns tracking until exit.
         if self.hand_switch == "on":
             return True
         if self.hand_switch == "off":
@@ -301,8 +304,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path in ("/", "/index.html"):
             return self._static("index.html")
-        if path in ("/panel.css", "/panel.js"):
+        if path in ("/panel.css", "/panel.js", "/rope.css", "/rope.js"):
             return self._static(path.lstrip("/"))
+
+        if path == "/api/rope/status":
+            return self._json(rope_game.snapshot())
 
         if path == "/api/health":
             return self._json({"ok": True, "service": "hackmit-panel", "port": PORT})
@@ -339,9 +345,13 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         body = self._body()
 
+        rope_response = rope_game.post(path, body, state)
+        if rope_response is not None:
+            return self._json(*rope_response)
+
         if path == "/api/view":
             view = str(body.get("view", "home"))
-            if view not in ("home", "scan", "hand", "graphs", "system"):
+            if view not in ("home", "scan", "hand", "graphs", "system", "rope"):
                 return self._json({"error": f"unknown view {view}"}, 400)
             with state.lock:
                 state.view = view

@@ -282,6 +282,35 @@ console.log('\nMAGNETIC REGION  a charged body curves, a neutral one does not')
 }
 
 // ---------------------------------------------------------------------------
+console.log('\nCONTAINMENT  a walled arena holds everything, however fast, and a grab cannot leave it')
+{
+  const scene = loadPreset('chain_reaction')
+  const a = scene.arena
+  const inside = (w: SandboxWorld): boolean =>
+    w.states().every((s) => {
+      const m = 0.2 // the largest half-extent in this scene
+      return Math.abs(s.position_m[0]) <= a.width_m / 2 + m && s.position_m[1] >= -m && s.position_m[1] <= a.height_m + m
+    })
+  for (const v of [[80, 30], [-80, 5], [10, 80], [20, -80]] as const) {
+    const w = new SandboxWorld(structuredClone(scene))
+    w.setVelocityMs('ball_1', [v[0], v[1]])
+    w.setVelocityMs('box_1', [v[0] * 0.8, v[1] * 0.8])
+    let held = true
+    for (let i = 0; i < 600; i++) {
+      w.step()
+      if (!inside(w)) { held = false; break }
+    }
+    const ball = w.states().find((s) => s.id === 'ball_1')!
+    ok(`ball and box launched at (${v[0]}, ${v[1]}) m/s stay in the arena for 5 s`, held && w.escaped.size === 0,
+      `(ball ends at x=${ball.position_m[0].toFixed(2)}, y=${ball.position_m[1].toFixed(2)})`)
+  }
+  const w = new SandboxWorld(structuredClone(scene))
+  w.setPositionM('ball_1', [a.width_m, a.height_m * 2])
+  const p = w.states().find((s) => s.id === 'ball_1')!.position_m
+  ok(`grab target outside the arena is clamped to (${p[0].toFixed(2)}, ${p[1].toFixed(2)})`, inside(w))
+}
+
+// ---------------------------------------------------------------------------
 console.log('\nDETERMINISM  a composed scene must replay exactly')
 {
   const a = new SandboxWorld(loadPreset('chain_reaction'))

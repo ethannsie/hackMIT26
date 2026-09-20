@@ -30,6 +30,17 @@ export const PUNCH_N_PER_M_S = 40
 export const MAX_PUSH_N = 60
 /** Below this fist speed no force is applied: a fist held still is not a push. */
 export const PUNCH_MIN_SPEED_M_S = 0.05
+/**
+ * Fastest a hand can launch a body, m/s. A real throw across the sim is a few
+ * m/s; a tracking glitch on release can report fifty. Above this the body
+ * outruns the collision detector and leaves the scene.
+ */
+export const MAX_THROW_M_S = 12
+
+function capSpeed(v: [number, number], max: number): [number, number] {
+  const speed = Math.hypot(v[0], v[1])
+  return speed > max ? [(v[0] / speed) * max, (v[1] / speed) * max] : v
+}
 
 /** The hand's own size on the sim plane, from its landmarks. */
 export function palmRadiusM(hand: HandFrame): number {
@@ -104,7 +115,10 @@ export class HandCoupling {
     if (this.grabbedId !== null) {
       if (hand.pinch < PINCH_RELEASE) {
         // Release: hand the body the palm's velocity. This is the throw.
-        world.setVelocityMs(this.grabbedId, [hand.palm_velocity_ms.x, hand.palm_velocity_ms.y])
+        world.setVelocityMs(
+          this.grabbedId,
+          capSpeed([hand.palm_velocity_ms.x, hand.palm_velocity_ms.y], MAX_THROW_M_S),
+        )
         this.grabbedId = null
       } else {
         const [holdX, holdY] = this.grabPoint(hand)
@@ -213,10 +227,10 @@ export class HandCoupling {
       (bodyVelocity[1] - hand.palm_velocity_ms.y) * normal[1]
     if (relativeNormal < 0) {
       const bounce = -(1 + 0.65) * relativeNormal
-      world.setVelocityMs(id, [
+      world.setVelocityMs(id, capSpeed([
         bodyVelocity[0] + normal[0] * bounce,
         bodyVelocity[1] + normal[1] * bounce,
-      ])
+      ], MAX_THROW_M_S))
     }
   }
 

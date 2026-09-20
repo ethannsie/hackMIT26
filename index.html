@@ -76,6 +76,22 @@
       #status[data-tone=warn] { color: var(--warn); }
       #status[data-tone=error] { color: var(--error); }
 
+      /* Big state over the sim while a spoken question is in flight, so the
+         monitor and the touchscreen say the same thing at the same time. */
+      #ask-banner {
+        position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+        max-width: 80%; padding: 12px 22px; border-radius: 999px;
+        font-size: 20px; font-weight: 700; letter-spacing: .02em; white-space: nowrap;
+        overflow: hidden; text-overflow: ellipsis;
+        background: var(--surface-2); border: 2px solid var(--line); color: var(--text);
+        box-shadow: 0 6px 24px rgba(0,0,0,.45); pointer-events: none;
+      }
+      #ask-banner[data-phase=listening] { border-color: var(--error); color: var(--error); animation: ask-blink 1s ease-in-out infinite; }
+      #ask-banner[data-phase=transcribing], #ask-banner[data-phase=thinking] { border-color: var(--warn); color: var(--warn); }
+      #ask-banner[data-phase=answered] { border-color: var(--good); color: var(--good); }
+      #ask-banner[data-phase=error] { border-color: var(--error); color: var(--error); }
+      @keyframes ask-blink { 50% { border-color: transparent; } }
+
       /* ---------- ask box ---------- */
       .ask { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
       .ask h4 {
@@ -276,6 +292,7 @@
 
     <main>
       <canvas id="stage"></canvas>
+      <div id="ask-banner" hidden></div>
 
       <div id="scrub-bar">
         <span id="scrub-time">0.00 s</span>

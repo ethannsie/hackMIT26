@@ -419,3 +419,64 @@ header {
   border: 3px solid var(--bg);
 }
 #graphs-scrub:disabled::-webkit-slider-thumb { background: var(--muted); }
+
+
+/* ---------- ask view ----------
+   Four states a visitor must be able to tell apart from a step back:
+   ready, LISTENING (red, pulsing, with a countdown), processing (amber),
+   answered (green). The colour, the word and the dot all change together. */
+.ask-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px 26px;
+  background: var(--surface);
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color .15s, background .15s;
+}
+.ask-phase {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.ask-dot {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+.ask-count { margin-left: auto; font: 700 34px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-dim); }
+.ask-big-hint { font-size: 19px; color: var(--text-dim); line-height: 1.4; }
+.ask-heard {
+  font-size: 22px; line-height: 1.35; color: var(--text);
+  padding: 10px 14px; border-left: 4px solid var(--accent); background: var(--surface-2); border-radius: 0 8px 8px 0;
+}
+.ask-heard::before { content: "You asked: "; color: var(--text-dim); font-size: 15px; display: block; margin-bottom: 3px; }
+.ask-answer { font-size: 20px; line-height: 1.45; overflow-y: auto; min-height: 0; }
+
+.ask-stage[data-phase=listening] { border-color: var(--error); background: #1a1113; }
+.ask-stage[data-phase=listening] .ask-phase { color: var(--error); }
+.ask-stage[data-phase=listening] .ask-dot { background: var(--error); animation: ask-pulse .9s ease-in-out infinite; }
+.ask-stage[data-phase=listening] .ask-count { color: var(--error); }
+.ask-stage[data-phase=transcribing], .ask-stage[data-phase=thinking] { border-color: var(--warn); background: #191610; }
+.ask-stage[data-phase=transcribing] .ask-phase, .ask-stage[data-phase=thinking] .ask-phase { color: var(--warn); }
+.ask-stage[data-phase=transcribing] .ask-dot, .ask-stage[data-phase=thinking] .ask-dot { background: var(--warn); animation: ask-spin 1s linear infinite; border-radius: 4px; }
+.ask-stage[data-phase=answered] { border-color: var(--good); }
+.ask-stage[data-phase=answered] .ask-phase { color: var(--good); }
+.ask-stage[data-phase=answered] .ask-dot { background: var(--good); }
+.ask-stage[data-phase=error] { border-color: var(--error); }
+.ask-stage[data-phase=error] .ask-phase { color: var(--error); }
+.ask-stage[data-phase=error] .ask-dot { background: var(--error); }
+
+#btn-ask.listening { border-color: var(--error); background: #2a1417; }
+#btn-ask.listening .act-label { color: var(--error); }
+#btn-ask.listening .num { border-color: var(--error); }
+
+@keyframes ask-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.5); opacity: .55; } }
+@keyframes ask-spin { to { transform: rotate(360deg); } }

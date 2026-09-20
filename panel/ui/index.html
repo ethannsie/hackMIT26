@@ -46,10 +46,10 @@
           <span class="tile-label">New problem</span>
           <span class="tile-sub">the GX10 writes one, the sim runs it</span>
         </button>
-        <button class="tile" data-app="ask">
+        <button class="tile" data-go="ask">
           <span class="tile-icon">🎤</span>
           <span class="tile-label">Ask a question</span>
-          <span class="tile-sub">speak to the webcam, answer on the big screen</span>
+          <span class="tile-sub" id="home-ask-sub">speak to the webcam, answer on the big screen</span>
         </button>
         <button class="tile danger" data-go="system">
           <span class="tile-icon">⏻</span>
@@ -77,6 +77,27 @@
       <div class="actions">
         <button class="act ok" id="rope-retry"><span class="act-label">↻ Restart level</span></button>
         <button class="act ghost" data-go="home"><span class="act-label">Exit game</span></button>
+      </div>
+    </section>
+
+    <!-- ---------- ask ---------- -->
+    <section class="view" id="view-ask" hidden>
+      <div class="ask-stage" id="ask-stage" data-phase="idle">
+        <div class="ask-phase">
+          <span class="ask-dot"></span>
+          <span id="ask-phase-label">Ready</span>
+          <span id="ask-count" class="ask-count"></span>
+        </div>
+        <div id="ask-hint" class="ask-big-hint">Press 1 (or the button) and ask your question out loud. Press again when you are done.</div>
+        <div id="ask-heard" class="ask-heard" hidden></div>
+        <div id="ask-answer" class="ask-answer" hidden></div>
+      </div>
+      <div class="actions">
+        <button class="act wide" id="btn-ask">
+          <span class="num">1</span>
+          <span class="act-label" id="ask-label">Start listening</span>
+        </button>
+        <button class="act ghost" data-go="home"><span class="act-label">Back</span></button>
       </div>
     </section>
 

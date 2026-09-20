@@ -80,6 +80,54 @@ Check with `xinput list-props <id> | grep Transformation`: identity means
 | phone hotspot | the Mac only gets an IPv6 route to the box: `ssh -6 asus@gx10-f443.local` (mDNS works here) |
 | sudo | passwordless for `asus` (hackathon box, not prod) |
 
+### SSH in (Ethan, Tony, Davide)
+
+Your GitHub SSH keys are already on the box (`ssh-import-id gh:<you>`), so
+whatever key you push to GitHub with just works:
+
+```bash
+ssh asus@<ip>          # hostname -I on the box; on a phone hotspot: ssh -6 asus@gx10-f443.local
+```
+
+If your key isn't accepted, you added a new one to GitHub since Saturday —
+re-import it from the box: `ssh-import-id gh:<your-github-username>`.
+
+### Git on the box
+
+**Default: develop on your laptop, push from your laptop, `git pull` on the box.**
+The box is the runtime, not your editor. `~/hackMIT26` is a normal clone on `main`:
+
+```bash
+cd ~/hackMIT26 && git pull
+```
+
+**If you must commit from the box** (you fixed something while testing on the
+real screen and don't want to retype it): the Linux user is shared, so tell git
+who you are for that shell, then commit on a branch and push:
+
+```bash
+export GIT_AUTHOR_NAME="Tony Ly" GIT_AUTHOR_EMAIL="tonyly@berkeley.edu"   # or yours
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+cd ~/hackMIT26
+git switch -c my-fix-branch
+git add -A && git commit -m "what you did"
+git push -u origin my-fix-branch
+```
+
+Pushing needs GitHub auth **once per box**. The first person to push runs:
+
+```bash
+gh auth login --hostname github.com --git-protocol https --web
+```
+
+It prints a one-time code and a URL — open the URL on your laptop, paste the
+code, approve. After that `git push` works for everyone on the box (it's one
+shared credential; the per-shell `GIT_AUTHOR_*` above is what keeps the commit
+attributed to you). Then open the PR from your laptop or with `gh pr create`.
+
+Never commit on `main` on the box: it's what the demo runs from, and a
+half-finished change there is a broken demo.
+
 ## Models
 
 | model | role | measured | notes |

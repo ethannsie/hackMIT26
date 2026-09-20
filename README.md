@@ -73,8 +73,11 @@ Two more things the local models do, both text-only and both on the box:
   the box; the question then goes to the local model with the problem on
   screen and the best-matching passages from OpenStax *University Physics
   Vol. 1* as context (`corpus/README.md` — built on the box, not committed,
-  CC BY-NC-SA). ~1.5–2 s per answer. Without a Deepgram key the box is typed
-  only; without the corpus the model answers from memory.
+  CC BY-NC-SA). ~1.5–2 s per answer. Voice is **online-only by design**:
+  the API probes Deepgram every 30 s and the mic button is disabled whenever
+  the box cannot reach it (or has no key), so the typed box is what works
+  offline. Without the corpus the model answers from memory. Measured:
+  a spoken sentence transcribed word-for-word in 0.8 s with `nova-3`.
 
 Reasoning is switched off for both (Ollama's native `think: false`): with it
 on, a structured problem took 31 s instead of 5.5.

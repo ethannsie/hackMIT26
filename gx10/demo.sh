@@ -43,7 +43,9 @@ wait_for() { # port path seconds
 # Own session + process group per service, so demo-stop.sh can kill the tree.
 start() { # name cmd...
   local name=$1; shift
-  setsid "$@" >"$RUN/$name.log" 2>&1 </dev/null &
+  # 9>&- : do not hand the lock fd to the service, or the lock is held for as
+  # long as the service lives and the next click reports "already starting".
+  setsid "$@" >"$RUN/$name.log" 2>&1 </dev/null 9>&- &
   echo $! >"$RUN/$name.pid"
   echo "   $name: started (pid $!, log .demo/$name.log)"
 }
@@ -66,8 +68,17 @@ else
 fi
 # Load the extraction model now so the first photo does not pay the ~30 s load.
 # Empty prompt = load only. keep_alive -1 = stay resident.
-curl -s -m 900 localhost:11434/api/generate -d "{\"model\":\"$MODEL\",\"keep_alive\":-1}" >/dev/null 2>&1 &
+curl -s -m 900 localhost:11434/api/generate -d "{\"model\":\"$MODEL\",\"keep_alive\":-1}" >/dev/null 2>&1 9>&- &
 echo "   warming $MODEL in the background"
+
+# ---- mqtt broker (ring light) ---------------------------------------------
+echo "-- mosquitto"
+if systemctl is-active --quiet mosquitto; then
+  echo "   already up"
+else
+  sudo -n systemctl start mosquitto 2>/dev/null && echo "   started" \
+    || echo "   not installed — ring light off (gx10/setup.sh installs it)"
+fi
 
 # ---- services -------------------------------------------------------------
 echo "-- panel (webcam)"

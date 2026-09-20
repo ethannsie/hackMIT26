@@ -73,8 +73,13 @@ export class Timeline {
     // requestAnimationFrame is not a physics clock. At slow playback speeds it
     // can render several times before the next fixed step, so don't turn one
     // physical state into a stack of duplicate scrub positions.
-    if (this.frames[this.frames.length - 1]?.step === step) return
-    if (step % STRIDE !== 0 && this.frames.length > 0) return
+    const last = this.frames[this.frames.length - 1]
+    if (last?.step === step) return
+    // Measured from the last frame kept, never `step % STRIDE`: a render loop
+    // only sees the step count at frame boundaries, and one odd-sized first
+    // frame (a 25 ms frame after a mode switch is three steps) would leave
+    // every later count odd and record nothing for the rest of the run.
+    if (last && step - last.step < STRIDE) return
 
     this.frames.push({ step, t_s, bodies })
     if (this.frames.length > this.capacity) this.frames.shift()

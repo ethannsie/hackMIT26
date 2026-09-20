@@ -17,14 +17,12 @@
   },
   "dependencies": {
     "katex": "^0.16.11",
-    "matter-js": "^0.20.0",
-    "three": "^0.169.0"
+    "matter-js": "^0.20.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/matter-js": "^0.19.7",
     "@types/node": "^26.6.2",
-    "@types/three": "^0.169.0",
     "concurrently": "^9.1.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",

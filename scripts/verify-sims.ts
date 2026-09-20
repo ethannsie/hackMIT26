@@ -12,6 +12,7 @@ import { SimWorld } from '../src/sim/world.ts'
 import { solve } from '../src/sim/analytic.ts'
 import { toParams } from '../src/sim/params.ts'
 import { FIXED_DT_S } from '../src/sim/units.ts'
+import { Timeline } from '../src/render/timeline.ts'
 import type { ProblemSpec, SpecGiven, ProblemType } from '../src/spec/types.ts'
 
 const EMPTY_GIVEN: SpecGiven = {
@@ -141,6 +142,32 @@ console.log('\nINCLINED PLANE  rolling sphere, theta = 25 deg — expect 5/7 of 
   check('rolling acceleration (m/s²)', aMeasured, answer(s, 'acceleration_ms2'), 1)
   const sliding = 9.81 * Math.sin(25 * Math.PI / 180)
   check('ratio to sliding value', aMeasured / sliding, 5 / 7, 1, '(the 71% that goes into rotation)')
+}
+
+// ---------------------------------------------------------------------------
+console.log('\nINCLINED PLANE  time to the bottom and final speed, against the panel')
+{
+  // The derivation solves for the full stated L, so the block must start at
+  // the top of that L, not a little way down it. It used to start 8 % down,
+  // which made the sim ~7 % faster than the algebra beside it.
+  const s = spec('inclined_plane', {
+    incline_angle_deg: 25, mu_kinetic: 0.15, mass_kg: 2, ramp_length_m: 1.2, body_motion: 'sliding',
+  })
+  const w = new SimWorld(s)
+  // The run ends when the block meets the floor at the ramp's foot: speed
+  // peaks there and drops as the floor takes the vertical component.
+  let t = -1
+  let vf = 0
+  for (let i = 0; i < 180; i++) { // 1.5 s, well past the 0.92 s the algebra gives
+    w.step()
+    const b = w.state().bodies['block']!
+    if (b.speed_ms > vf) {
+      vf = b.speed_ms
+      t = w.time_s
+    }
+  }
+  check('time to bottom (s)', t, answer(s, 'time_to_bottom_s'), 2)
+  check('speed at the bottom (m/s)', vf, answer(s, 'final_velocity_ms'), 2)
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +498,32 @@ console.log('\nDETERMINISM  identical spec, identical step count, two separate w
   const identical2 = JSON.stringify(c.state().bodies) === sa
   if (!identical2) failures++
   console.log(`  [${identical2 ? 'PASS' : 'FAIL'}] batched stepping matches single stepping`)
+}
+
+console.log('\nTIMELINE  a render loop at any frame rate must keep recording history')
+{
+  // The loop only sees the step count at frame boundaries. One odd-sized
+  // first frame (a 25 ms frame after a mode switch is three steps) used to
+  // leave every later count odd, and a stride check on parity then recorded
+  // nothing for the rest of the run: no scrubbing, no paths, no panel graphs.
+  for (const [fps, firstMs] of [[60, 25], [60, 30], [30, 33.3], [45, 22.2]] as const) {
+    const w = new SimWorld(spec('projectile', { v0_ms: 12, launch_angle_deg: 40, h0_m: 1.5 }))
+    const tl = new Timeline()
+    const rec = (): void => tl.record(w.steps, w.time_s, {})
+    rec()
+    w.advanceWith(firstMs, () => [])
+    rec()
+    for (let i = 0; i < fps * 2; i++) {
+      w.advanceWith(1000 / fps, () => [])
+      rec()
+    }
+    // A frame can be kept only where the loop looked, so the most the
+    // timeline can hold is one per render frame, or one per two steps.
+    const possible = Math.min(fps * 2 + 2, Math.floor(w.steps / 2) + 1)
+    const pass = tl.length >= possible * 0.9
+    if (!pass) failures++
+    console.log(`  [${pass ? 'PASS' : 'FAIL'}] ${fps} fps, first frame ${firstMs} ms: ${w.steps} steps -> ${tl.length} frames`)
+  }
 }
 
 console.log(`\nfixed timestep: ${(FIXED_DT_S * 1000).toFixed(3)} ms (${(1 / FIXED_DT_S).toFixed(0)} Hz)`)

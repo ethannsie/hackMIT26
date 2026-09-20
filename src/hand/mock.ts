@@ -19,10 +19,13 @@ import type { HandFrame, HandSource, Vec3 } from './types.ts'
 export interface MockOptions {
   /** Element whose coordinate space the mouse is read in. */
   element: HTMLElement
-  /** Metres per CSS pixel, so mock frames land in the same scale as real ones. */
-  metresPerPixel: number
-  /** Scene-space position of the element's centre, in metres. */
-  origin_m?: { x: number; y: number }
+  /**
+   * Screen → scene metres for whatever view is live. The view zooms per
+   * problem and pans after the focus body, so a fixed metres-per-pixel would
+   * put the hand somewhere other than under the cursor; this is the same
+   * mapping the camera sources use, so all three land in the same place.
+   */
+  toScene: (clientX: number, clientY: number) => [number, number]
   /** How far past the plane a held button reaches, in metres. */
   pushDepth_m?: number
 }
@@ -36,19 +39,13 @@ export class MockHandSource implements HandSource {
 
   constructor(options: MockOptions) {
     this.opts = {
-      origin_m: { x: 0, y: 0 },
       pushDepth_m: 0.05,
       ...options,
     }
   }
 
   private onMove = (e: MouseEvent): void => {
-    const rect = this.opts.element.getBoundingClientRect()
-    const x =
-      (e.clientX - rect.left - rect.width / 2) * this.opts.metresPerPixel + this.opts.origin_m.x
-    // Screen y grows downward; the sim frame's y grows upward.
-    const y =
-      -(e.clientY - rect.top - rect.height / 2) * this.opts.metresPerPixel + this.opts.origin_m.y
+    const [x, y] = this.opts.toScene(e.clientX, e.clientY)
     const t = performance.now()
 
     // Finite-difference velocity. Real MediaPipe frames get this the same way,

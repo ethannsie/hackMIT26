@@ -16,6 +16,12 @@ Three things, each one button from the home screen:
 ```bash
 panel/setup.sh                    # deps + hand_landmarker.task, re-runnable
 python3 panel/panel_server.py     # http://localhost:8770
+
+Home tiles that act on the big screen rather than here: **New problem**
+(`POST /api/app/generate` → SSE `app:generate` → the app asks the GX10 for a
+fresh problem) and **Ask a question** (`POST /api/app/ask` → SSE `app:ask` →
+the app records 7 s from the webcam mic, transcribes, and answers on the
+monitor). The panel only relays; see the project README, "Generate and Ask".
 panel/launch_panel.sh             # Chromium on the 7in screen, not the big one
 ```
 

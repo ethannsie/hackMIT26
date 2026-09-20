@@ -28,6 +28,10 @@ export interface PanelEvents {
   onView?(view: string): void
   /** Transport from the panel's Graphs view: same effect as the app's own controls. */
   onControl?(cmd: SimControl): void
+  /** The panel's "New problem" tile. Undefined type means "any". */
+  onGenerate?(problemType?: string): void
+  /** The panel's "Ask a question" tile: start recording here. */
+  onAsk?(): void
 }
 
 export class PanelLink {
@@ -72,6 +76,12 @@ export class PanelLink {
         this.events.onView?.(this.view)
       }
     })
+
+    stream.addEventListener('app:generate', (e) => {
+      const data = JSON.parse((e as MessageEvent).data) as { problem_type?: unknown }
+      this.events.onGenerate?.(typeof data.problem_type === 'string' ? data.problem_type : undefined)
+    })
+    stream.addEventListener('app:ask', () => this.events.onAsk?.())
 
     stream.addEventListener('sim:control', (e) => {
       const cmd = JSON.parse((e as MessageEvent).data) as SimControl

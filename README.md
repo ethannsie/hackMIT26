@@ -56,6 +56,32 @@ The GX10 local extraction path needs no OpenAI key. If extraction is unavailable
 pick a prepared problem and use the sliders. Hosted OpenAI support remains in
 code for development, but the agreed demo runs all models locally.
 
+## Generate and Ask (GX10, no photo needed)
+
+Two more things the local models do, both text-only and both on the box:
+
+- **New problem** — the `✨ New problem` button (or `N`, or the panel's tile)
+  has `nemotron-3.5-lightning` write a fresh problem of the selected type
+  *and* fill the same ProblemSpec schema the photo path uses, in one
+  structured reply. It lands through the same validator, builders and
+  derivation as a scan. 5–6 s measured. A consistency check rejects a draft
+  whose numbers do not appear in its own statement and asks for another.
+- **Ask about the physics** — a box under the derivation. Type a question
+  (or `A`), or press `🎤` / `M` / the panel's *Ask a question* tile to record
+  7 s from the webcam's own mic. The clip goes to Deepgram (`DEEPGRAM_API_KEY`
+  in `.env`, server-side only; needs internet) and the words come back into
+  the box; the question then goes to the local model with the problem on
+  screen and the best-matching passages from OpenStax *University Physics
+  Vol. 1* as context (`corpus/README.md` — built on the box, not committed,
+  CC BY-NC-SA). ~1.5–2 s per answer. Voice is **online-only by design**:
+  the API probes Deepgram every 30 s and the mic button is disabled whenever
+  the box cannot reach it (or has no key), so the typed box is what works
+  offline. Without the corpus the model answers from memory. Measured:
+  a spoken sentence transcribed word-for-word in 0.8 s with `nova-3`.
+
+Reasoning is switched off for both (Ollama's native `think: false`): with it
+on, a structured problem took 31 s instead of 5.5.
+
 ---
 
 ## The two contracts
@@ -196,9 +222,10 @@ src/sim/         params -> scene -> deterministic world; closed forms; correctio
                  nine problem types — see CAPABILITIES.md
 src/hand/        the HandFrame contract, mouse mock, hand->force coupling
 src/extract/     browser-side compression and API client
+src/ask/         the Ask box: recorder (webcam mic), transcription + question client
 src/render/      canvas views, KaTeX derivation panel, motion graphs
 src/history.ts   rollback buffer (snapshots are spec + step count)
-server/          extraction API and the extraction prompt
+server/          extraction API and prompt; generate + ask + transcribe; BM25 corpus
 scripts/         verify-sims.ts (run this), e2e.ts
 ```
 

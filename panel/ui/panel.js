@@ -460,6 +460,17 @@ for (const btn of document.querySelectorAll('[data-go]')) {
   });
 }
 
+// Tiles that act on the big screen rather than on this one. The server
+// relays them to the app over SSE; the app does the work and shows the
+// result there, so this only needs to say the request went through.
+for (const btn of document.querySelectorAll('[data-app]')) {
+  btn.addEventListener('click', async () => {
+    const what = btn.dataset.app;
+    await post(`/api/app/${what}`);
+    toast(what === 'ask' ? 'Listening on the big screen — speak now' : 'Writing a new problem on the big screen…', 'ok');
+  });
+}
+
 for (const seg of document.querySelectorAll('[data-switch]')) {
   seg.addEventListener('click', () => post('/api/hand/switch', { switch: seg.dataset.switch }));
 }

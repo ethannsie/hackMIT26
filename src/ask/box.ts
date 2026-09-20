@@ -1,0 +1,169 @@
+/**
+ * The Ask box: a visitor's question in, the local model's answer out.
+ *
+ * Two ways in. Typed, which always works; and spoken, which records from the
+ * webcam's mic, sends the clip to /api/transcribe (Deepgram, the one hosted
+ * piece) and drops the words into the same field. Either way the question
+ * goes to /api/ask with whatever problem is on screen as context, so "why is
+ * it only 2.8?" means something.
+ *
+ * The panel's "Ask a question" tile lands on record() too, so the touchscreen
+ * can start a recording that plays out on the big screen.
+ */
+import { askQuestion, transcribe, voiceState, type AskContext, type VoiceState } from './client.ts'
+import { Recorder } from './recorder.ts'
+
+/** How long the mic listens, seconds. Long enough for a sentence, short enough that the countdown is the whole UI. */
+const RECORD_SECONDS = 7
+
+export class AskBox {
+  private readonly input: HTMLInputElement
+  private readonly askBtn: HTMLButtonElement
+  private readonly micBtn: HTMLButtonElement
+  private readonly state: HTMLElement
+  private readonly answer: HTMLElement
+  private readonly sources: HTMLElement
+  private readonly recorder = new Recorder()
+  private busy = false
+  /** Follows /api/health: the mic only lights up when Deepgram is reachable. */
+  private voice: VoiceState = 'offline'
+
+  constructor(
+    root: HTMLElement,
+    /** What is on screen right now, sent along with every question. */
+    private readonly context: () => AskContext,
+    private readonly setStatus: (text: string, tone?: 'ok' | 'warn' | 'error') => void,
+  ) {
+    root.innerHTML = `
+      <h4>Ask about the physics</h4>
+      <div class="ask-row">
+        <input id="ask-input" type="text" placeholder="e.g. why does the block slow down?" autocomplete="off" />
+        <button id="ask-mic" class="icon-btn" disabled>🎤</button>
+        <button id="ask-send" title="Ask (Enter)">Ask</button>
+      </div>
+      <div id="ask-state" class="ask-state" hidden></div>
+      <div id="ask-answer" class="ask-answer" hidden></div>
+      <div id="ask-sources" class="ask-sources" hidden></div>`
+    this.input = root.querySelector('#ask-input')!
+    this.askBtn = root.querySelector('#ask-send')!
+    this.micBtn = root.querySelector('#ask-mic')!
+    this.state = root.querySelector('#ask-state')!
+    this.answer = root.querySelector('#ask-answer')!
+    this.sources = root.querySelector('#ask-sources')!
+
+    this.askBtn.addEventListener('click', () => void this.ask())
+    this.input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        void this.ask()
+      }
+    })
+    this.micBtn.addEventListener('click', () => void this.record())
+
+    // Online-only by design: the mic is disabled whenever the box cannot
+    // reach the transcription service, so nobody talks into a dead button.
+    void this.refreshVoice()
+    setInterval(() => void this.refreshVoice(), 30_000)
+  }
+
+  private async refreshVoice(): Promise<void> {
+    this.voice = await voiceState()
+    const ready = this.voice === 'ready'
+    this.micBtn.disabled = !ready
+    this.micBtn.title = ready
+      ? `Records ${RECORD_SECONDS} s from the webcam mic`
+      : this.voice === 'no-key'
+        ? 'Voice needs DEEPGRAM_API_KEY in .env — type the question instead'
+        : 'Voice needs the internet and the box is offline — type the question instead'
+  }
+
+  private voiceBlocked(): string | null {
+    if (this.voice === 'ready') return null
+    return this.voice === 'no-key'
+      ? 'voice is off: no Deepgram key on this box — type the question instead'
+      : 'voice is off: the box is offline — type the question instead'
+  }
+
+  focus(): void {
+    this.input.focus()
+  }
+
+  /** Send whatever is typed. */
+  async ask(question = this.input.value.trim()): Promise<void> {
+    if (!question || this.busy) return
+    this.input.value = question
+    this.setBusy(true, 'thinking…')
+    try {
+      const result = await askQuestion(question, this.context())
+      this.answer.textContent = result.answer
+      this.answer.hidden = false
+      if (result.sources.length) {
+        this.sources.textContent = `From ${result.sources.join(' · ')} (OpenStax, CC BY-NC-SA 4.0)`
+        this.sources.hidden = false
+      } else {
+        this.sources.hidden = true
+      }
+      this.showState(`answered in ${(result.elapsed_ms / 1000).toFixed(1)} s`)
+    } catch (err) {
+      this.showState((err as Error).message, 'error')
+    } finally {
+      this.setBusy(false)
+    }
+  }
+
+  /** Listen, transcribe, then ask. The panel tile calls this. */
+  async record(): Promise<void> {
+    if (this.busy) return
+    if (this.recorder.recording) {
+      this.recorder.stop()
+      return
+    }
+    const blocked = this.voiceBlocked()
+    if (blocked) {
+      this.showState(blocked, 'warn')
+      this.setStatus(blocked, 'warn')
+      this.focus()
+      return
+    }
+    this.answer.hidden = true
+    this.sources.hidden = true
+    this.micBtn.classList.add('on')
+    this.micBtn.textContent = '■'
+    this.micBtn.title = 'Stop early'
+    try {
+      const clip = await this.recorder.record(RECORD_SECONDS, (left) => this.showState(`listening… ${left}`, 'warn'))
+      this.micBtn.classList.remove('on')
+      this.micBtn.textContent = '🎤'
+      this.setBusy(true, 'transcribing…')
+      const heard = await transcribe(clip.blob)
+      if (!heard.text.trim()) {
+        this.showState('did not catch that — try again, closer to the camera', 'warn')
+        return
+      }
+      this.input.value = heard.text
+      this.setBusy(false)
+      await this.ask(heard.text)
+    } catch (err) {
+      this.showState((err as Error).message, 'error')
+      this.setStatus(`ask: ${(err as Error).message}`, 'error')
+    } finally {
+      this.micBtn.classList.remove('on')
+      this.micBtn.textContent = '🎤'
+      this.setBusy(false)
+      void this.refreshVoice()
+    }
+  }
+
+  private setBusy(busy: boolean, label?: string): void {
+    this.busy = busy
+    this.askBtn.disabled = busy
+    this.input.disabled = busy
+    if (label) this.showState(label, 'warn')
+  }
+
+  private showState(text: string, tone: 'ok' | 'warn' | 'error' = 'ok'): void {
+    this.state.textContent = text
+    this.state.dataset['tone'] = tone
+    this.state.hidden = false
+  }
+}

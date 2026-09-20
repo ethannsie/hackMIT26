@@ -1,0 +1,372 @@
+/* Panel styling for a 7 in. touchscreen.
+ *
+ * Sized for 1024x600 (the common 7 in. panel) and still correct at 1280x800.
+ * Two rules drive everything here: nothing is smaller than a fingertip (56 px
+ * minimum, 88 px for the primary actions), and no control needs a second
+ * glance to identify — this screen is read sideways, at arm's length, while
+ * someone is talking to a judge.
+ *
+ * Palette is the main app's, so the two displays read as one system.
+ */
+
+:root {
+  --bg: #0b0d11;
+  --surface: #12151c;
+  --surface-2: #171b24;
+  --line: #232833;
+  --text: #c9d1d9;
+  --text-dim: #8b949e;
+  --muted: #6e7681;
+  --accent: #4da3ff;
+  --good: #3fb950;
+  --warn: #ffd166;
+  --error: #ff7b72;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body { height: 100%; margin: 0; overflow: hidden; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: flex;
+  flex-direction: column;
+  /* A kiosk panel with a text cursor is a panel someone will accidentally
+     select the UI of. */
+  user-select: none;
+}
+
+/* ---------- header ---------- */
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  min-height: 46px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: .14em;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.spacer { flex: 1; }
+
+.chip {
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.chip.ok    { color: var(--good);  border-color: #1d3b26; }
+.chip.warn  { color: var(--warn);  border-color: #3d3520; }
+.chip.error { color: var(--error); border-color: #43262a; }
+
+/* ---------- views ---------- */
+
+.view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  gap: 12px;
+}
+.view[hidden] { display: none; }
+
+/* ---------- home ---------- */
+
+.tiles {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  padding: 16px;
+  transition: border-color .12s, background .12s, transform .06s;
+}
+.tile:active { transform: scale(.985); background: var(--surface-2); }
+.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tile-icon  { font-size: 44px; line-height: 1; color: var(--accent); }
+.tile-label { font-size: 20px; font-weight: 600; }
+.tile-sub   { font-size: 13px; color: var(--muted); text-align: center; }
+.tile.danger .tile-icon { color: var(--error); }
+.tile.danger:active { background: #1d1416; }
+.tile.live { border-color: var(--accent); }
+
+.home-foot {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+}
+
+/* ---------- camera stage ---------- */
+
+.stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: #000;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.feed {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(11, 13, 17, .82);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font: 600 12px/1 ui-monospace, monospace;
+  letter-spacing: .1em;
+}
+
+.note {
+  position: absolute;
+  inset: auto 16px 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(11, 13, 17, .9);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* The shutter flash is the only confirmation that reads instantly from across
+   a room — a toast at this size does not. */
+.flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+}
+.flash.fire { animation: flash .28s ease-out; }
+@keyframes flash {
+  from { opacity: .85; }
+  to   { opacity: 0; }
+}
+
+/* ---------- actions ---------- */
+
+.actions {
+  flex: none;
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.act {
+  flex: 1;
+  min-height: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  padding: 0 18px;
+  transition: border-color .12s, background .12s, transform .06s;
+}
+.act:active:not(:disabled) { transform: scale(.985); background: var(--surface-2); }
+.act:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.act:disabled { opacity: .35; cursor: default; }
+.act-label { font-size: 21px; font-weight: 600; }
+
+/* The 1 and 2 are the actual keys on the operator's keypad, so they are
+   rendered as keycaps rather than as decoration. */
+.num {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-bottom-width: 3px;
+  font: 700 19px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-dim);
+}
+.act:not(:disabled) .num { color: var(--text); }
+.act.ok:not(:disabled)   { border-color: #1d3b26; }
+.act.ok:not(:disabled) .act-label { color: var(--good); }
+.act.ghost { flex: 0 0 150px; background: transparent; }
+.act.ghost .act-label { font-size: 17px; color: var(--text-dim); }
+.act.wide { flex: 1; }
+.act.armed { border-color: var(--accent); background: #0f1e2e; }
+
+/* ---------- segmented switch ---------- */
+
+.switch {
+  flex: 1;
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  min-height: 88px;
+}
+.seg {
+  flex: 1;
+  background: var(--surface);
+  border: 0;
+  border-right: 1px solid var(--line);
+  color: var(--text-dim);
+  font: 600 17px/1 inherit;
+  cursor: pointer;
+}
+.seg:last-child { border-right: 0; }
+.seg:active { background: var(--surface-2); }
+.seg.on { background: #0f1e2e; color: var(--accent); }
+.seg:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+
+/* ---------- hints ---------- */
+
+.hint {
+  flex: none;
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  min-height: 19px;
+}
+.hint.ok    { color: var(--good); }
+.hint.warn  { color: var(--warn); }
+.hint.error { color: var(--error); }
+
+/* ---------- system ---------- */
+
+.system {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  padding: 0 24px;
+}
+.system h1 { margin: 0; font-size: 26px; font-weight: 650; }
+.system p  { margin: 0; color: var(--text-dim); max-width: 44ch; font-size: 14px; }
+
+.hold {
+  position: relative;
+  width: min(420px, 90%);
+  min-height: 92px;
+  border: 1px solid #43262a;
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--error);
+  font: 650 20px/1 inherit;
+  cursor: pointer;
+  overflow: hidden;
+}
+.hold:focus-visible { outline: 2px solid var(--error); outline-offset: 2px; }
+/* The fill is the progress bar; its width is set from JS as the hold runs, so
+   an accidental brush is visibly not enough. */
+.hold-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: #3a1d20;
+  transition: width .06s linear;
+}
+.hold-label { position: relative; }
+.hold.done { background: #3a1d20; }
+
+.goodbye {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: grid;
+  place-items: center;
+  z-index: 20;
+}
+.goodbye[hidden] { display: none; }
+.goodbye-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  font-size: 20px;
+  color: var(--text-dim);
+}
+.goodbye-icon { font-size: 54px; color: var(--error); }
+
+/* ---------- toast ---------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  padding: 11px 18px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 14px;
+  z-index: 15;
+  max-width: 90vw;
+  text-align: center;
+}
+.toast[hidden] { display: none; }
+.toast.ok    { border-color: #1d3b26; color: var(--good); }
+.toast.error { border-color: #43262a; color: var(--error); }
+
+/* ---------- short panels ---------- */
+
+@media (max-height: 620px) {
+  .act, .switch { min-height: 72px; }
+  .tile-icon { font-size: 36px; }
+  .tile-label { font-size: 18px; }
+  .view { padding: 10px; gap: 9px; }
+}

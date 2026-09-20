@@ -1,51 +1,102 @@
 # GX10 — the demo box
 
 ASUS Ascent GX10 = NVIDIA DGX Spark. GB10, 128 GB unified memory, **ARM64**,
-DGX OS (Ubuntu 24.04). Target deployment: the GX10 runs **all models**, the
-browser and the simulation. The **ASUS portable monitor** shows the simulation;
-the **7-inch touchscreen** is the capture/menu controller. One USB webcam serves
-photo capture and hand tracking. Laptops are for editing.
+DGX OS (Ubuntu 24.04, GNOME on Xorg). The whole demo runs on it with **no
+network**: Chromium drives both displays, the webcam is on its USB, and Ollama
+answers on `localhost`. Laptops are for editing. Plan §9 has the reasoning.
 
-No external depth sensors, IMU, ESP32 or serial bridge are required. The two-view
-controller/display workflow and webcam hand adapter still need integration and
-hardware verification; the commands below start the existing app only.
+## Run the demo: one icon
+
+Double-click **HackMIT Demo** on the box's desktop. It starts everything that
+is not already up and puts the two windows on the right screens:
+
+| | | |
+|---|---|---|
+| Ollama (systemd) | `:11434` | photo → spec, `qwen3.8` kept resident, pre-warmed on launch |
+| `panel/panel_server.py` | `:8770` | owns the webcam: scan + MediaPipe hand tracking |
+| `server/index.ts` | `:8787` | `/api/extract` → localhost Ollama, no OpenAI key |
+| vite | `:5173` | the physics app |
+| Chromium ×2 | | sim full-screen on the big monitor, panel full-screen on the 7 in. touchscreen |
+
+**Stop HackMIT Demo** closes it all (Ollama stays up). From a shell the same
+things are `gx10/demo.sh` and `gx10/demo-stop.sh`; logs and pids live in
+`.demo/` at the repo root (`tail -f .demo/*.log`). Re-running the start icon is
+safe: anything already running is left alone.
+
+Measured Sat 19 Sep 19:14 on the box, hotspot unplugged from the loop: icon →
+both windows up in ~2 s; panel scan → spec on the big screen in ~30 s via
+`qwen3.8` on the GPU, `source: local`. WebGL2 works in snap Chromium there.
+
+### First-time install (needs internet once)
+
+```bash
+ssh asus@<box>
+cd ~/hackMIT26 && git pull
+bash gx10/setup.sh          # OS level: ssh, no sleep, ollama, chromium, node — already done
+bash gx10/install-demo.sh   # app level: npm deps, .venv with mediapipe, hand model, .env, desktop icons
+```
+
+`install-demo.sh` is re-runnable and prints what it found. It also installs
+`wmctrl`, which `demo.sh` uses to pin each window to its monitor.
+
+### Two displays
+
+`demo.sh` reads `xrandr`: the largest monitor gets the sim, the smallest gets
+the panel. With one monitor the sim is full-screen and the panel opens as a
+window on top.
+
+### Touchscreen
+
+**The WiseCoco needs its USB cable into the GX10 (or its hub), not a wall
+charger**, for touch to exist at all: video is HDMI, touch + power are the USB.
+Once plugged in it enumerates as `27c0:0859 wch.cn TouchScreen`
+(`hid-multitouch`, plus a mouse-emulation interface) — no extra driver.
+
+By default X stretches its touch surface across the whole 2944×1080 virtual
+screen, so a tap on the 7 in. lands on the big monitor. Two fixes are in place:
+
+- **Persistent (GNOME/mutter):** the device is pinned to the 7 in. by its EDID
+  identity, applied automatically on login and replug:
+  ```bash
+  gsettings set org.gnome.desktop.peripherals.touchscreen:/org/gnome/desktop/peripherals/touchscreens/27c0:0859/ output "['TXD', 'Display', '00000000SL0']"
+  ```
+  (A different 7 in. panel has different EDID strings: `xrandr --props`,
+  decode the EDID, use vendor / product name / serial.)
+- **At launch:** `demo.sh` runs `xinput map-to-output <id> <smallest monitor>`
+  for every touch device it finds.
+
+Check with `xinput list-props <id> | grep Transformation`: identity means
+"whole screen"; mapped to HDMI-0 it reads `0.348, 0, 0, 0, 0.556, 0, 0, 0, 1`.
 
 ## Access
 
 | | |
 |---|---|
-| hostname | `gx10-f443` (`.local` mDNS does **not** resolve on venue Wi-Fi — use the IP) |
+| hostname | `gx10-f443` |
 | user | `asus` — factory password is on the Quick Reference Card in the box; change it |
-| SSH | `ssh asus@<ip>` — Davide's key is installed; add yours with `ssh-copy-id` |
-| IP | `hostname -I` on the box. It changes when the Wi-Fi does |
-| Wi-Fi | venue `HackMIT.2026` works for internet **and** for SSH by IP |
+| SSH | `ssh asus@<ip>` — Davide's, Ethan's and Tony's keys are installed; add yours with `ssh-copy-id` |
+| IP | `hostname -I` on the box. It changes when the network does |
+| venue Wi-Fi `HackMIT.2026` | internet and SSH by IPv4; `.local` does **not** resolve there |
+| phone hotspot | the Mac only gets an IPv6 route to the box: `ssh -6 asus@gx10-f443.local` (mDNS works here) |
 | sudo | passwordless for `asus` (hackathon box, not prod) |
-
-## State as of Sat 19 Sep evening
-
-Done, via `gx10/setup.sh` (re-runnable):
-- SSH on, `asus` in `dialout`, sleep/suspend masked, screen never blanks.
-- Ollama 0.32.15 on `0.0.0.0:11434`, models kept resident (`OLLAMA_KEEP_ALIVE=-1`).
-- Chromium (snap) installed, `raw-usb` connected. Firefox was the only browser shipped.
-- Legacy `python3-serial` and `python3-websockets` dependencies installed during the earlier sensor plan; unused by the active demo.
-- Repo cloned at `~/hackMIT26`.
 
 ## Models
 
 | model | role | measured | notes |
 |---|---|---|---|
-| `qwen3.8` (Qwen 3.5 27B, Q4) | photo → spec (**vision**) | 18 tok/s, ~30 s per photo | preinstalled. Correct + deterministic on the real prompt/schema |
-| `nemotron-3.5-lightning` (33B MoE) | optional future explanations | 67 tok/s, **0.9 s** per sentence | preinstalled. Text only, tools, 1M context |
-| `qwen3-vl:8b` | faster photo → spec | untested | pull initiated; confirm completion and A/B accuracy and speed before switching |
+| `qwen3.8` (Qwen 3.5 27B, Q4) | photo → spec (**vision**) | 18 tok/s, ~30 s per photo | preinstalled. Correct + deterministic on the real prompt/schema. **The one `.env` uses** |
+| `nemotron-3.5-lightning` (33B MoE) | live "why did that happen?" | 67 tok/s, **0.9 s** per sentence | preinstalled. Text only, tools, 1M context |
+| `qwen3-vl:8b` | faster photo → spec | pulled, untested | ~3× faster ingest option; A/B on real photos before switching `EXTRACT_LOCAL_MODEL` |
 
-Both preinstalled models stay loaded together: ~47 GB of 128.
+All on disk, so nothing here needs the network. Both preinstalled models stay
+loaded together: ~47 GB of 128.
 
 ## Extraction wiring
 
 `server/index.ts` tries `EXTRACT_LOCAL_URL` first (Ollama's OpenAI-compatible
-`/v1`, same prompt and strict JSON schema as the hosted path), falls back to
-OpenAI after `EXTRACT_LOCAL_TIMEOUT_MS` only if a key is configured. For the
-agreed all-local demo leave `OPENAI_API_KEY` unset. On the GX10, `.env` is:
+`/v1`, same prompt and strict JSON schema as the hosted path), and only falls
+back to OpenAI after `EXTRACT_LOCAL_TIMEOUT_MS` — which never happens on the
+box because there is no key. `.env` there:
 
 ```
 EXTRACT_LOCAL_URL=http://localhost:11434/v1
@@ -53,63 +104,38 @@ EXTRACT_LOCAL_MODEL=qwen3.8
 EXTRACT_LOCAL_TIMEOUT_MS=45000
 ```
 
-The 45 s is deliberate: a 27B model needs ~30 s for the 538-token spec, so a
-short timeout means the GX10 never answers and the ASUS story is false. If
-`qwen3-vl:8b` proves accurate, switch `EXTRACT_LOCAL_MODEL` and drop the timeout.
+The 45 s is deliberate: a 27B model needs ~30 s for the 538-token spec.
+`demo.sh` loads the model on launch (`keep_alive: -1`) so the first photo
+does not also pay the load.
 
-Verified end to end from a laptop on Sat 19 Sep: `/api/extract` → `source:
-"local"`, `ok: true`, 28 s, no OpenAI key present.
+## Sensors: serial → WebSocket (legacy, not in the current demo)
 
-## Display and camera setup
-
-1. Verify the ASUS portable monitor model and ports. Earlier notes call it a
-   ZenScreen; the user called it a Zenbook portable monitor. Use the actual label
-   when selecting adapters and power connections.
-2. Connect it and the 7-inch touchscreen to the GX10 as an **extended desktop**.
-   Simultaneous video output and the required adapters are not yet verified.
-3. Connect touchscreen power and touch data as required by its actual ports.
-   Map touches to the small display; test all corners and rotation.
-4. Connect the C270 webcam. Check readable printed text and stable hand tracking
-   under table lighting, using a repeatable camera/page position.
-5. Once the controller/display views exist, put the menu on the 7-inch screen
-   and the simulation on the ASUS monitor. Both must share one problem/session.
-
-The touchscreen flow is **Take a picture -> preview/capture -> local extraction
--> simulation on ASUS -> resume hand interaction**. Use one webcam initially;
-pause interaction during capture and reacquire the hand afterward. Camera access,
-GPU acceleration, two-display operation and this flow remain hardware tests.
-
-## Run the existing app
+The confirmed demo is webcam-only. If an ESP32 ever comes back:
 
 ```bash
-ssh asus@<ip>
-cd ~/hackMIT26
-# Check out the team's approved demo revision before starting.
-npm run dev                           # web :5173, api :8787
+python3 gx10/serial_bridge.py          # auto-finds /dev/ttyUSB*|ttyACM*, 115200, ws://localhost:8765
 ```
 
-On the GX10 desktop open Chromium at `http://localhost:5173`. This launches the
-current single-view app; it does not yet launch a separate touchscreen menu.
-The two-view routes and automatic monitor placement have not been implemented.
-Do not start `gx10/serial_bridge.py`; it remains a legacy utility only.
-
-## Demo acceptance
-
-- Touch capture loads each of the four confirmed types: projectile, inclined
-  plane, pendulum and 1D collision.
-- Simulation appears on ASUS while menu/loading/error state stays on 7-inch.
-- All model execution stays on GX10; verify with no OpenAI key, record local
-  extraction source, and make required model assets available before the demo.
-- Retry, unsupported input, tracking loss and return from capture behave cleanly.
-- Both displays, touch alignment and camera access survive a restart.
+Snap Chromium cannot open `/dev/ttyUSB0` and Firefox has no WebSerial, so the
+bridge forwards NDJSON lines to `new WebSocket('ws://localhost:8765')`.
 
 ## Gotchas
 
-- **Venue Wi-Fi blocks device-to-device traffic** for some pairs (`No route to
-  host` from a Mac on the same subnet earlier, then it worked from a different
-  spot). Running everything on the box sidesteps this; for SSH, the phone
-  hotspot always works.
+- **Snap Chromium cannot write under `~/.config`** (hidden top-level dirs are
+  outside its `home` interface). A `--user-data-dir` there is silently
+  replaced by the default profile, the second launch joins the first process,
+  and the panel lands on the wrong screen. `demo.sh` keeps its two profiles in
+  `.demo/profile-*` inside the repo instead. `panel/launch_panel.sh` still
+  uses `~/.config/hackmit-panel` and so does not work on the box on its own.
+- **`--kiosk` ignores `--window-position`** and lands on the primary display.
+  `--app` + `wmctrl` is what actually places a window.
+- **Ubuntu 24.04 refuses `pip install --user`** (PEP 668). The panel's Python
+  deps live in `.venv/` (`--system-site-packages`); `demo.sh` uses that
+  interpreter when present. MediaPipe 1.0.1 runs fine on this ARM64 Linux —
+  the 1.0.x crash is Mac-only.
+- **Venue Wi-Fi blocks device-to-device traffic** for some pairs. Running
+  everything on the box sidesteps this; for SSH, the phone hotspot always
+  works (over IPv6, see Access).
 - **ARM64 + Blackwell (`sm_121`)**: anything past Ollama (vLLM, PyTorch) needs
   NVIDIA NGC containers `26.01+`.
-- Venue download speed was ~2 MB/s. Pull models early.
 - Two `hostname -I` addresses are normal: the second (`172.17.0.1`) is Docker.

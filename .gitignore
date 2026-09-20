@@ -4,3 +4,17 @@ dist/
 .env.local
 *.log
 .DS_Store
+
+# Panel scans and the MediaPipe model (fetched by panel/setup.sh)
+captures/
+panel/models/
+hand_landmarker.task
+__pycache__/
+
+# gx10/demo.sh runtime state and the on-box python venv
+.demo/
+.venv/
+
+# ESP32 ring-light credentials (copy secrets.example.h)
+hackmit_camera_light/secrets.h
+hackmit_camera_light/build/

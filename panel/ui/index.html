@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Fixed scale: this page has exactly one display and pinch-zooming a
+         kiosk panel by accident is a demo-ending mistake. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Physics Panel</title>
+    <link rel="stylesheet" href="/panel.css" />
+  </head>
+  <body>
+    <header>
+      <span class="brand">PANEL</span>
+      <span id="mode-chip" class="chip">mode —</span>
+      <span class="spacer"></span>
+      <span id="cam-chip" class="chip">camera —</span>
+      <span id="link-chip" class="chip warn">offline</span>
+    </header>
+
+    <!-- ---------- home ---------- -->
+    <section class="view" id="view-home">
+      <div class="tiles">
+        <button class="tile" data-go="scan">
+          <span class="tile-icon">◉</span>
+          <span class="tile-label">Scan image</span>
+          <span class="tile-sub">capture a problem for the solver</span>
+        </button>
+        <button class="tile" data-go="hand">
+          <span class="tile-icon">✋</span>
+          <span class="tile-label">Hand tracking</span>
+          <span class="tile-sub" id="home-hand-sub">MediaPipe overlay</span>
+        </button>
+        <button class="tile danger" data-go="system">
+          <span class="tile-icon">⏻</span>
+          <span class="tile-label">System</span>
+          <span class="tile-sub">shut everything down</span>
+        </button>
+      </div>
+      <div class="home-foot">
+        <span id="home-saved">no scans yet</span>
+      </div>
+    </section>
+
+    <!-- ---------- scan ---------- -->
+    <section class="view" id="view-scan" hidden>
+      <div class="stage">
+        <img id="scan-live" class="feed" alt="camera preview" />
+        <img id="scan-frozen" class="feed" alt="captured frame" hidden />
+        <div id="scan-badge" class="badge" hidden>FROZEN</div>
+        <div id="scan-flash" class="flash"></div>
+      </div>
+      <div class="actions">
+        <button class="act" id="btn-capture">
+          <span class="num">1</span>
+          <span class="act-label" id="capture-label">Capture</span>
+        </button>
+        <button class="act ok" id="btn-save" disabled>
+          <span class="num">2</span>
+          <span class="act-label">Save</span>
+        </button>
+        <button class="act ghost" data-go="home">
+          <span class="act-label">Back</span>
+        </button>
+      </div>
+      <p class="hint" id="scan-hint">Frame the problem, then press 1.</p>
+    </section>
+
+    <!-- ---------- hand ---------- -->
+    <section class="view" id="view-hand" hidden>
+      <div class="stage">
+        <img id="hand-feed" class="feed" alt="hand tracking overlay" />
+        <div id="hand-note" class="note" hidden></div>
+      </div>
+      <div class="actions">
+        <div class="switch" role="group" aria-label="Hand overlay">
+          <button class="seg" data-switch="auto">Auto</button>
+          <button class="seg" data-switch="on">Always on</button>
+          <button class="seg" data-switch="off">Off</button>
+        </div>
+        <button class="act ghost" data-go="home">
+          <span class="act-label">Back</span>
+        </button>
+      </div>
+      <p class="hint" id="hand-hint">Auto follows the app: on in sandbox, off in problem mode.</p>
+    </section>
+
+    <!-- ---------- system ---------- -->
+    <section class="view" id="view-system" hidden>
+      <div class="system">
+        <h1>Shut down</h1>
+        <p>Powers off the GX10. The simulation, the panel and this screen all stop.</p>
+        <button class="hold" id="btn-shutdown">
+          <span class="hold-fill"></span>
+          <span class="hold-label">Hold to power off</span>
+        </button>
+        <p class="hint" id="shutdown-hint">Hold for 2 seconds. A tap does nothing.</p>
+        <button class="act ghost wide" data-go="home"><span class="act-label">Back</span></button>
+      </div>
+    </section>
+
+    <div id="goodbye" class="goodbye" hidden>
+      <div class="goodbye-inner">
+        <span class="goodbye-icon">⏻</span>
+        <span>Shutting down…</span>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="/panel.js"></script>
+  </body>
+</html>

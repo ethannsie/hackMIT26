@@ -6,18 +6,21 @@ with the **USB webcam**, then interact with its simulation on the larger
 
 **All models run on the ASUS Ascent GX10**, which also hosts the app and
 simulation. The webcam serves both photo capture and hand tracking. No depth
-sensor, IMU, ESP32, firmware or serial bridge is required for the active demo.
+sensor, IMU or serial bridge is required; the one microcontroller is an
+ESP32-S3 driving the camera ring light over MQTT
+([hackmit_camera_light/](hackmit_camera_light/README.md)).
 
 The initial demo covers **projectile, inclined plane, pendulum and 1D collision**
 (confirmed September 19). The engine already contains nine
 problem types and a sandbox; those additional capabilities are not part of the
 initial touchscreen menu scope.
 
-**Implementation status:** the solver, derivations, graphs, mouse interaction
-and extraction API exist. The webcam HandSource adapter, touch capture menu,
-shared controller/display state and two-monitor deployment still need integration
-and hardware validation. This documentation describes the agreed target, not a
-claim that these features are finished.
+**Implementation status (Sat 19 Sep evening):** solver, derivations, graphs,
+extraction API, the touchscreen menu ([panel/](panel/README.md): scan, hand
+overlay, shutdown), webcam hand tracking into the sim, the ring light and the
+one-icon two-display launch on the GX10 ([gx10/](gx10/README.md)) all exist
+and have run on the real hardware. Still open: a full rehearsal with printed
+problems, and the GX10 hosting its own Wi-Fi so the ring light needs no phone.
 
 - [Build plan](hackmit-2026-plan.md): architecture, scope and acceptance.
 - [GX10 guide](gx10/README.md): local inference and hardware setup.
@@ -209,3 +212,22 @@ lying. It is sufficient for the initial demo; a three.js scene is not required.
 Disclosed per the HackMIT honour code (plan §17):
 matter-js 0.20, three 0.169, katex 0.16, openai 4.73, vite 5.4, express 4.21.
 Approach follows LivePhys (arXiv:2607.20990) for the scan-to-spec stage.
+
+## Standalone webcam demo
+
+`hand_physics_demo.py` is the original webcam-first prototype: index fingertip
+as cursor, thumb + index pinch to grab, open palm as a soft pusher, with a
+drawn hand avatar. On the demo box the [panel](panel/README.md) owns the
+camera, so run this only on a laptop. Python 3.10+:
+
+```bash
+python3 -m pip install -r requirements.txt
+curl -fLo hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
+python3 hand_physics_demo.py            # --preview for the OpenCV window
+```
+
+With the web app open it posts poses to `/api/hand/frame` and the browser
+(`?hand=python`) drives the sim from them; without it the browser keeps the
+mouse (`?hand=mouse` forces it). It holds a grab through a 0.22 s tracker
+dropout and needs six open frames to release — constants at the top of the
+file. `depth_at_cursor_mm()` is an empty adapter left for a depth sensor.

@@ -20,6 +20,7 @@ export class RopeMinigame {
     this.stream.addEventListener('rope:control', e => {
       const { action } = JSON.parse((e as MessageEvent).data) as { action: string }
       if (action === 'restart') this.game?.restart()
+      if (action === 'cut') this.game?.cutRopes()
     })
     if (this.standalone) {
       this.open()
@@ -29,10 +30,7 @@ export class RopeMinigame {
     window.addEventListener('pagehide', () => { this.close(); this.stream.close() }, { once: true })
   }
   private open(): void {
-    if (!this.game) this.game = new RopeGame(this.base, () => {
-      this.standalone = false; this.close(); void this.setView('home')
-      const url = new URL(location.href); url.searchParams.delete('game'); history.replaceState(null, '', url)
-    })
+    if (!this.game) this.game = new RopeGame(this.base)
   }
   private close(): void { this.game?.dispose(); this.game = null }
   private async setView(view: string): Promise<void> {

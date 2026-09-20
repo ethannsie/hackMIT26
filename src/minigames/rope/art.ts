@@ -7,6 +7,7 @@ interface Particle extends Point { vx: number; vy: number; life: number; color: 
 export class RopeArt {
   private particles: Particle[] = []
   private trail: (Point & { life: number })[] = []
+  private flight: (Point & { time: number })[] = []
   private last = 0
   constructor(readonly canvas: HTMLCanvasElement) {}
 
@@ -48,26 +49,70 @@ export class RopeArt {
       }
       ctx.restore()
     }
-    ctx.fillStyle = '#52704b'; ctx.font = '600 13px system-ui'; ctx.textAlign = 'left'
-    ctx.fillText('A LITTLE PHYSICS. A LITTLE MAGIC.', 72, 146)
-    ctx.fillStyle = '#264f39'; ctx.font = '800 52px system-ui'
-    ctx.fillText('The first snip.', 70, 207)
-    ctx.font = '20px system-ui'; ctx.fillStyle = '#60775b'
-    ctx.fillText('One rope. Three stars.', 73, 249)
-    ctx.fillText('One very hungry friend.', 73, 277)
+    ctx.fillStyle = '#52704b'; ctx.font = '600 12px system-ui'; ctx.textAlign = 'left'
+    ctx.fillText('LEVEL 01 · THE PHYSICS PLAYGROUND', 62, 148)
+    ctx.fillStyle = '#264f39'; ctx.font = '800 43px system-ui'
+    ctx.fillText('Swing & sling.', 60, 206)
+    ctx.font = '18px system-ui'; ctx.fillStyle = '#60775b'
+    ctx.fillText('Give your candy momentum.', 63, 248)
+    ctx.fillText('Find your own way to dinner.', 63, 277)
 
-    ctx.save(); ctx.translate(92, 374); ctx.rotate(-0.06)
-    ctx.fillStyle = '#ffffff80'; ctx.beginPath(); ctx.roundRect(-20, -32, 330, 141, 18); ctx.fill()
-    ctx.fillStyle = '#315b42'; ctx.font = '700 21px system-ui'; ctx.fillText('✂  Swipe to cut', 0, 0)
-    ctx.font = '17px system-ui'; ctx.fillStyle = '#60775b'
-    ctx.fillText('Point one finger at the camera.', 0, 36)
-    ctx.fillText('Sweep across the rope.', 0, 63)
-    ctx.fillText('No pinching needed.', 0, 90); ctx.restore()
+    ctx.save(); ctx.translate(80, 341); ctx.rotate(-0.025)
+    ctx.fillStyle = '#ffffff90'; ctx.beginPath(); ctx.roundRect(-20, -30, 275, 211, 18); ctx.fill()
+    ctx.fillStyle = '#315b42'; ctx.font = '700 19px system-ui'; ctx.fillText('01  Pinch to pick up', 0, 0)
+    ctx.font = '15px system-ui'; ctx.fillStyle = '#60775b'
+    ctx.fillText('Thumb + index around the candy.', 0, 27)
+    ctx.fillStyle = '#315b42'; ctx.font = '700 19px system-ui'; ctx.fillText('02  Swing, then cut', 0, 66)
+    ctx.font = '15px system-ui'; ctx.fillStyle = '#60775b'
+    ctx.fillText('The rope limits how far it goes.', 0, 93)
+    ctx.fillStyle = '#315b42'; ctx.font = '700 19px system-ui'; ctx.fillText('03  Open to release', 0, 132)
+    ctx.font = '15px system-ui'; ctx.fillStyle = '#60775b'
+    ctx.fillText('Let go. Your candy keeps moving.', 0, 159); ctx.restore()
+    ctx.font = '600 14px system-ui'; ctx.fillStyle = '#53734e'
+    ctx.fillText('GRAVITY   9.81 m/s²', 65, 300)
 
-    ctx.save(); ctx.setLineDash([3, 10]); ctx.strokeStyle = '#64845755'; ctx.lineWidth = 2
-    ctx.beginPath(); ctx.moveTo(700, 300); ctx.bezierCurveTo(815, 275, 785, 335, 710, 324); ctx.stroke()
-    ctx.restore()
-    ctx.fillStyle = '#648457'; ctx.font = 'italic 17px Georgia'; ctx.fillText('snip here', 798, 306)
+    // Exact rigid-body shapes: the drawn surface is the collision surface.
+    for (const surface of world.level.surfaces ?? []) {
+      ctx.save(); ctx.translate(surface.x, surface.y)
+      if (surface.kind === 'bumper') {
+        this.disc(ctx, 0, 0, surface.radius + 5, '#8a6b42')
+        this.disc(ctx, 0, 0, surface.radius, '#e1ad56')
+        ctx.setLineDash([5, 6]); ctx.strokeStyle = '#fff3c4'; ctx.lineWidth = 3
+        ctx.beginPath(); ctx.arc(0, 0, surface.radius - 9, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
+        this.disc(ctx, 0, 0, 10, '#9c713f')
+        ctx.textAlign = 'center'; ctx.fillStyle = '#886639'; ctx.font = 'italic 14px Georgia'
+        ctx.fillText('rubber bumper', 0, -surface.radius - 17)
+      } else {
+        ctx.rotate(surface.angle ?? 0)
+        ctx.fillStyle = surface.label === 'ramp' ? '#9c7650' : '#7c9666'
+        ctx.fillRect(-surface.width / 2, -surface.height / 2, surface.width, surface.height)
+        ctx.fillStyle = surface.label === 'ramp' ? '#dcc194' : '#b0c48e'
+        ctx.fillRect(-surface.width / 2, -surface.height / 2, surface.width, 5)
+        if (surface.label === 'ramp') {
+          ctx.strokeStyle = '#6d51375c'; ctx.lineWidth = 2
+          for (let x = -surface.width / 2 + 15; x < surface.width / 2; x += 28) {
+            ctx.beginPath(); ctx.moveTo(x, -5); ctx.lineTo(x - 7, 9); ctx.stroke()
+          }
+        }
+      }
+      ctx.restore()
+    }
+    if (this.flight.length && world.elapsed < this.flight[this.flight.length - 1]!.time) this.flight = []
+    if (!this.flight.length || world.elapsed - this.flight[this.flight.length - 1]!.time > 0.035) {
+      this.flight.push({ ...world.candy, time: world.elapsed })
+    }
+    this.flight = this.flight.filter(p => world.elapsed - p.time < 1.2)
+    for (const p of this.flight) {
+      ctx.globalAlpha = Math.max(0, 1 - (world.elapsed - p.time) / 1.2) * 0.35
+      this.disc(ctx, p.x, p.y, 3, '#627d55')
+    }
+    ctx.globalAlpha = 1
+    if (world.target) {
+      ctx.strokeStyle = '#368ba0'; ctx.lineWidth = 2; ctx.setLineDash([4, 5])
+      ctx.beginPath(); ctx.moveTo(world.candy.x, world.candy.y); ctx.lineTo(world.target.x, world.target.y); ctx.stroke(); ctx.setLineDash([])
+      ctx.strokeStyle = '#3d9b9b'; ctx.lineWidth = 3
+      ctx.beginPath(); ctx.arc(world.candy.x, world.candy.y, 34, 0, Math.PI * 2); ctx.stroke()
+    }
 
     // The visible rope is the exact line tested by the blade.
     for (const rope of world.ropes) {
@@ -94,7 +139,7 @@ export class RopeArt {
     })
 
     this.monster(ctx, world, now)
-    if (world.outcome !== 'won') this.candy(ctx, world.candy, world.elapsed * 0.25)
+    if (world.outcome !== 'won') this.candy(ctx, world.candy, world.angle)
 
     for (const event of world.events.splice(0)) {
       const color = event.kind === 'cut' ? '#faf4d4' : event.kind === 'lost' ? '#e78379' : '#ffce52'
@@ -119,7 +164,7 @@ export class RopeArt {
     }
     ctx.shadowBlur = 0; ctx.globalAlpha = 1
     if (trackedHand?.landmarks_m?.length === 21) {
-      drawTrackedHand(ctx, trackedHand)
+      drawTrackedHand(ctx, trackedHand, world.held)
     } else if (hand) {
       this.disc(ctx, hand.x, hand.y, 15, '#ffffffb0')
       ctx.strokeStyle = '#287657'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(hand.x, hand.y, 21, 0, 2 * Math.PI); ctx.stroke()

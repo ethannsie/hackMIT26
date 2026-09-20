@@ -1,8 +1,12 @@
+import Matter from 'matter-js'
 import { HEIGHT, WIDTH, type Point, type RopeLevel } from './levels.ts'
 
-const STEP = 1 / 120
-const GRAVITY = 850
+const { Engine, Bodies, Body, Composite } = Matter
+const STEP = 1 / 240
+export const PIXELS_PER_METRE = 85
+export const GRAVITY = 9.81 * PIXELS_PER_METRE
 export const CANDY_RADIUS = 24
+export const MAX_SPEED = 1800
 export type Outcome = 'playing' | 'won' | 'lost'
 export interface Rope { anchor: Point; length: number; cut: boolean }
 export interface GameEvent { kind: 'cut' | 'star' | 'won' | 'lost'; at: Point }
@@ -21,37 +25,75 @@ export function segmentsMeet(a: Point, b: Point, c: Point, d: Point, margin = 8)
     distanceToSegment(c, a, b), distanceToSegment(d, a, b)) <= margin
 }
 
-/** Pure, fixed-step simulation. No DOM, shared physics world, or camera ownership. */
+/** Dedicated rigid-body world. Finger interaction applies forces, never teleports.
+ * 240 Hz collision substeps keep the fastest allowed throw below 8 px per step.
+ */
 export class RopeWorld {
-  candy: Point
-  velocity: Point = { x: 0, y: 0 }
+  readonly engine = Engine.create({ positionIterations: 12, velocityIterations: 10 })
+  readonly body: Matter.Body
   ropes: Rope[]
   collected: boolean[]
   outcome: Outcome = 'playing'
   elapsed = 0
   events: GameEvent[] = []
+  target: Point | null = null
   private accumulator = 0
 
   constructor(readonly level: RopeLevel) {
-    this.candy = { ...level.candy }
+    this.engine.gravity.y = 1
+    this.engine.gravity.scale = GRAVITY / 1e6
+    this.body = Bodies.circle(level.candy.x, level.candy.y, CANDY_RADIUS, {
+      restitution: 0.48, friction: 0.08, frictionStatic: 0.12, frictionAir: 0,
+      mass: 0.25, label: 'candy',
+    }, 32)
+    Body.setInertia(this.body, 0.5 * this.body.mass * CANDY_RADIUS ** 2)
+    Composite.add(this.engine.world, this.body)
+    for (const surface of level.surfaces ?? []) {
+      const options = { isStatic: true, friction: 0.08, restitution: surface.kind === 'bumper' ? 0.85 : 0.35, label: surface.label }
+      Composite.add(this.engine.world, surface.kind === 'bumper'
+        ? Bodies.circle(surface.x, surface.y, surface.radius, options, 48)
+        : Bodies.rectangle(surface.x, surface.y, surface.width, surface.height, { ...options, angle: surface.angle ?? 0 }))
+    }
     this.ropes = level.anchors.map(anchor => ({ anchor: { ...anchor },
       length: Math.hypot(anchor.x - level.candy.x, anchor.y - level.candy.y), cut: false }))
     this.collected = level.stars.map(() => false)
   }
 
+  get candy(): Point { return this.body.position }
+  get velocity(): Point { const v = Body.getVelocity(this.body); return { x: v.x * 60, y: v.y * 60 } }
+  set velocity(v: Point) { Body.setVelocity(this.body, { x: v.x / 60, y: v.y / 60 }) }
+  get speed(): number { const v = this.velocity; return Math.hypot(v.x, v.y) / PIXELS_PER_METRE }
+  get angle(): number { return this.body.angle }
+  get held(): boolean { return this.target !== null }
   get stars(): number { return this.collected.filter(Boolean).length }
   get cuts(): number { return this.ropes.filter(r => r.cut).length }
 
+  grab(point: Point): boolean {
+    if (this.outcome !== 'playing' || Math.hypot(point.x - this.candy.x, point.y - this.candy.y) > CANDY_RADIUS + 24) return false
+    this.moveTarget(point)
+    return true
+  }
+  moveTarget(point: Point): void {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return
+    this.target = { x: Math.max(CANDY_RADIUS, Math.min(WIDTH - CANDY_RADIUS, point.x)),
+      y: Math.max(110, Math.min(HEIGHT - 60, point.y)) }
+  }
+  /** Release keeps actual body momentum. No camera-jitter velocity injection. */
+  release(): void { this.target = null }
+  dispose(): void { Composite.clear(this.engine.world, false); Engine.clear(this.engine) }
+
+  cutAll(): void {
+    if (this.outcome !== 'playing') return
+    for (const rope of this.ropes) if (!rope.cut) this.cut(rope)
+  }
+  private cut(rope: Rope): void {
+    rope.cut = true
+    this.events.push({ kind: 'cut', at: { x: (rope.anchor.x + this.candy.x) / 2, y: (rope.anchor.y + this.candy.y) / 2 } })
+  }
   swipe(from: Point, to: Point): number {
-    if (this.outcome !== 'playing' || Math.hypot(to.x - from.x, to.y - from.y) < 4) return 0
+    if (this.held || this.outcome !== 'playing' || Math.hypot(to.x - from.x, to.y - from.y) < 4) return 0
     let count = 0
-    for (const rope of this.ropes) {
-      if (!rope.cut && segmentsMeet(from, to, rope.anchor, this.candy)) {
-        rope.cut = true
-        this.events.push({ kind: 'cut', at: { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 } })
-        count++
-      }
-    }
+    for (const rope of this.ropes) if (!rope.cut && segmentsMeet(from, to, rope.anchor, this.candy)) { this.cut(rope); count++ }
     return count
   }
 
@@ -67,39 +109,43 @@ export class RopeWorld {
   private step(): void {
     this.elapsed += STEP
     const before = { ...this.candy }
-    this.velocity.y += GRAVITY * STEP
-    this.candy.x += this.velocity.x * STEP
-    this.candy.y += this.velocity.y * STEP
-    // A rope pulls but cannot push. Project the taut rope and remove only the
-    // outward velocity, preserving the swing's tangential momentum on release.
-    for (let iteration = 0; iteration < 8; iteration++) {
+    if (this.target) {
+      const target = { ...this.target }
+      // Don't accumulate an impossible spring stretch beyond an intact rope.
       for (const rope of this.ropes) {
-        if (rope.cut) continue
-        const dx = this.candy.x - rope.anchor.x, dy = this.candy.y - rope.anchor.y
-        const length = Math.hypot(dx, dy)
-        if (length <= rope.length || length === 0) continue
-        const nx = dx / length, ny = dy / length
-        this.candy.x = rope.anchor.x + nx * rope.length
-        this.candy.y = rope.anchor.y + ny * rope.length
-        const outward = this.velocity.x * nx + this.velocity.y * ny
-        if (outward > 0) {
-          this.velocity.x -= outward * nx
-          this.velocity.y -= outward * ny
+        const dx = target.x - rope.anchor.x, dy = target.y - rope.anchor.y, d = Math.hypot(dx, dy)
+        if (!rope.cut && d > rope.length) {
+          target.x = rope.anchor.x + dx / d * rope.length
+          target.y = rope.anchor.y + dy / d * rope.length
         }
       }
+      const v = this.velocity
+      const ax = 220 * (target.x - this.candy.x) - 28 * v.x
+      const ay = 220 * (target.y - this.candy.y) - 28 * v.y - GRAVITY
+      const limit = Math.min(1, 18000 / (Math.hypot(ax, ay) || 1))
+      Body.applyForce(this.body, this.candy, { x: ax * limit * this.body.mass / 1e6, y: ay * limit * this.body.mass / 1e6 })
     }
+    Engine.update(this.engine, STEP * 1000)
+    for (let iteration = 0; iteration < 4; iteration++) for (const rope of this.ropes) {
+      if (rope.cut) continue
+      const dx = this.candy.x - rope.anchor.x, dy = this.candy.y - rope.anchor.y, length = Math.hypot(dx, dy)
+      if (length <= rope.length || length === 0) continue
+      const nx = dx / length, ny = dy / length, v = this.velocity
+      Body.setPosition(this.body, { x: rope.anchor.x + nx * rope.length, y: rope.anchor.y + ny * rope.length })
+      const outward = v.x * nx + v.y * ny
+      if (outward > 0) this.velocity = { x: v.x - outward * nx, y: v.y - outward * ny }
+    }
+    const v = this.velocity, speed = Math.hypot(v.x, v.y)
+    if (speed > MAX_SPEED) this.velocity = { x: v.x * MAX_SPEED / speed, y: v.y * MAX_SPEED / speed }
     this.level.stars.forEach((star, i) => {
       if (!this.collected[i] && distanceToSegment(star, before, this.candy) < CANDY_RADIUS + 19) {
-        this.collected[i] = true
-        this.events.push({ kind: 'star', at: { ...star } })
+        this.collected[i] = true; this.events.push({ kind: 'star', at: { ...star } })
       }
     })
-    if (distanceToSegment(this.level.mouth, before, this.candy) < 35) {
-      this.outcome = 'won'
-      this.events.push({ kind: 'won', at: { ...this.level.mouth } })
+    if (!this.held && distanceToSegment(this.level.mouth, before, this.candy) < 35) {
+      this.outcome = 'won'; this.events.push({ kind: 'won', at: { ...this.level.mouth } })
     } else if (this.candy.y > HEIGHT + 60 || this.candy.x < -80 || this.candy.x > WIDTH + 80) {
-      this.outcome = 'lost'
-      this.events.push({ kind: 'lost', at: { ...this.candy } })
+      this.outcome = 'lost'; this.events.push({ kind: 'lost', at: { ...this.candy } })
     }
   }
 }

@@ -1,4 +1,5 @@
 import type { HandFrame } from '../../hand/types.ts'
+import { isPinching, pinchCenter } from './input.ts'
 
 const FINGERS = [[0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]]
 const PALM = [0, 1, 5, 9, 13, 17]
@@ -6,7 +7,7 @@ const PALM = [0, 1, 5, 9, 13, 17]
 /** Draw in the exact same game coordinates as cutting, including closed fists.
  * Visibility is deliberately independent of whether a pose is allowed to cut.
  */
-export function drawTrackedHand(ctx: CanvasRenderingContext2D, frame: HandFrame): void {
+export function drawTrackedHand(ctx: CanvasRenderingContext2D, frame: HandFrame, held = false): void {
   const points = frame.landmarks_m
   if (!points || points.length < 21) return
   const wrist = points[0]!, index = points[5]!, pinky = points[17]!
@@ -43,12 +44,13 @@ export function drawTrackedHand(ctx: CanvasRenderingContext2D, frame: HandFrame)
   for (const point of points) {
     ctx.fillStyle = '#eefeff'; ctx.beginPath(); ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2); ctx.fill()
   }
-  const tip = points[8]!
-  const armed = (frame.fist ?? 0) <= 0.65 && frame.confidence >= 0.5
+  const tip = pinchCenter(frame)
+  const armed = isPinching(frame, held) && frame.confidence >= 0.5
   ctx.strokeStyle = armed ? '#167756' : '#bd7c38'; ctx.lineWidth = 3
+  ctx.beginPath(); ctx.moveTo(points[4]!.x, points[4]!.y); ctx.lineTo(points[8]!.x, points[8]!.y); ctx.stroke()
   ctx.beginPath(); ctx.arc(tip.x, tip.y, 19, 0, Math.PI * 2); ctx.stroke()
   ctx.fillStyle = '#fffbedeb'; ctx.beginPath(); ctx.roundRect(wrist.x - 68, wrist.y + 20, 136, 29, 14); ctx.fill()
   ctx.fillStyle = armed ? '#286147' : '#935f2e'; ctx.textAlign = 'center'; ctx.font = '700 12px system-ui'
-  ctx.fillText(armed ? 'SWIPE TO CUT' : 'OPEN YOUR HAND', wrist.x, wrist.y + 39)
+  ctx.fillText(held ? 'OPEN TO RELEASE' : 'PINCH TO GRAB', wrist.x, wrist.y + 39)
   ctx.restore()
 }

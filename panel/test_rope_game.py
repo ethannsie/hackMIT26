@@ -56,6 +56,8 @@ class RopeIntegrationTests(unittest.TestCase):
         try:
             self.assertEqual(self.request('/api/rope/control', {"action": "restart"})[0], 200)
             self.assertEqual(queue.get(timeout=1), ('rope:control', {"action": "restart"}))
+            self.assertEqual(self.request('/api/rope/control', {"action": "cut"})[0], 200)
+            self.assertEqual(queue.get(timeout=1), ('rope:control', {"action": "cut"}))
         finally:
             ps.hub.unsubscribe(queue)
         self.assertEqual(self.request('/api/rope/control', {"action": "unknown"})[0], 400)

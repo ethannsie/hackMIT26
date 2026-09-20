@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
+import Matter from 'matter-js'
+import { isPinching } from '../src/minigames/rope/input.ts'
+import { CandyInteraction } from '../src/minigames/rope/interaction.ts'
 import { LEVELS, type RopeLevel } from '../src/minigames/rope/levels.ts'
 import { RopeWorld, segmentsMeet } from '../src/minigames/rope/physics.ts'
-import { HandBlade } from '../src/minigames/rope/input.ts'
 import type { HandFrame } from '../src/hand/types.ts'
 
 let checks = 0
@@ -9,7 +11,7 @@ const test = (name: string, f: () => void) => { f(); console.log(`PASS ${name}`)
 const tick = (world: RopeWorld, seconds: number, hz = 60) => {
   for (let i = 0; i < seconds * hz; i++) world.advance(1 / hz)
 }
-const level = LEVELS[0]!
+const level: RopeLevel = { id: 0, name: 'Vertical fixture', candy: { x: 640, y: 350 }, anchors: [{ x: 640, y: 155 }], stars: [{ x: 640, y: 445 }, { x: 640, y: 530 }, { x: 640, y: 610 }], mouth: { x: 640, y: 704 } }
 const cut = (w: RopeWorld) => w.swipe({ x: 570, y: 260 }, { x: 710, y: 260 })
 
 test('Uncut candy stays suspended for 30 seconds', () => {
@@ -67,31 +69,108 @@ function frame(x: number, time: number, overrides: Partial<HandFrame> = {}): Han
   return { t_ms: time, confidence: 1, handedness: 'right', palm_m: { x, y: 260, z: 0 },
     palm_velocity_ms: { x: 0, y: 0, z: 0 }, pinch: 0, fist: 0, ...overrides }
 }
-test('Recorded-format hand samples cut through the same gameplay path', () => {
-  const blade = new HandBlade(), w = new RopeWorld(level)
-  assert.equal(blade.sample(frame(550, 100)), null)
-  const swipe = blade.sample(frame(730, 133))!
-  assert.equal(w.swipe(...swipe), 1); tick(w, 3); assert.equal(w.outcome, 'won')
+const playground = LEVELS[0]!
+const empty = (candy: {x: number; y: number}): RopeLevel => ({ ...playground, candy, anchors: [], stars: [], mouth: { x: -1000, y: -1000 } })
+
+test('Redesigned level has a physical three-star throw solution', () => {
+  const w = new RopeWorld(playground); w.cutAll(); w.velocity = { x: 560, y: -110 }; tick(w, 3)
+  assert.equal(w.outcome, 'won'); assert.equal(w.stars, 3)
 })
-test('Lost, stale, repeated, uncertain, fist, and teleporting hands never bridge a cut', () => {
-  const blade = new HandBlade()
-  blade.sample(frame(550, 100)); blade.sample(null)
-  assert.equal(blade.sample(frame(730, 133)), null)
-  assert.equal(blade.sample(frame(550, 500)), null)
-  assert.equal(blade.sample(frame(730, 500)), null)
-  assert.equal(blade.sample(frame(730, 530, { confidence: 0.2 })), null)
-  assert.equal(blade.sample(frame(550, 560)), null)
-  assert.equal(blade.sample(frame(730, 590, { fist: 1 })), null)
-  assert.equal(blade.sample(frame(550, 620)), null)
-  assert.equal(blade.sample(frame(1100, 650)), null)
+test('Free throw follows the gravity parabola and keeps horizontal momentum', () => {
+  const w = new RopeWorld({ ...empty({ x: 500, y: 200 }), surfaces: [] })
+  w.velocity = { x: 400, y: -100 }; tick(w, 0.5)
+  assert.ok(Math.abs(w.candy.x - 700) < 0.5)
+  assert.ok(Math.abs(w.candy.y - (200 - 50 + 0.5 * 9.81 * 85 * 0.25)) < 1.5)
+  assert.ok(Math.abs(w.velocity.x - 400) < 0.1)
 })
-test('Index fingertip takes precedence over the palm', () => {
-  const blade = new HandBlade()
-  const landmarks = Array.from({ length: 21 }, () => ({ x: 200, y: 260, z: 0 }))
-  landmarks[8] = { x: 550, y: 260, z: 0 }
-  blade.sample(frame(200, 100, { landmarks_m: landmarks }))
-  landmarks[8] = { x: 730, y: 260, z: 0 }
-  const swipe = blade.sample(frame(200, 133, { landmarks_m: landmarks }))!
-  assert.equal(swipe[0].x, 550); assert.equal(swipe[1].x, 730)
+test('Finger moves candy with a force, rope limits reach, release preserves velocity', () => {
+  const w = new RopeWorld(playground)
+  assert.ok(w.grab(w.candy)); w.moveTarget({ x: 880, y: 340 })
+  assert.equal(w.candy.x, playground.candy.x)
+  tick(w, 0.5)
+  assert.ok(w.candy.x > playground.candy.x + 40)
+  assert.ok(Math.hypot(w.candy.x - 540, w.candy.y - 150) <= 190.01)
+  assert.equal(w.swipe({ x: 500, y: 200 }, { x: 700, y: 200 }), 0)
+  w.cutAll(); w.moveTarget({ x: 900, y: 450 }); tick(w, 0.2)
+  const v = w.velocity; w.release()
+  assert.deepEqual(w.velocity, v); assert.ok(v.x > 100)
+  const x = w.candy.x; tick(w, 0.1); assert.ok(w.candy.x > x + 5)
+})
+test('Fast throw cannot tunnel through the floor or right wall', () => {
+  const floor = new RopeWorld(empty({ x: 540, y: 630 })); floor.velocity = { x: 0, y: 1800 }
+  let bounced = false
+  for (let i = 0; i < 60; i++) {
+    floor.advance(1 / 120); assert.ok(floor.candy.y < 711)
+    if (floor.velocity.y < -50) bounced = true
+  }
+  assert.ok(bounced)
+  const wall = new RopeWorld(empty({ x: 1150, y: 230 })); wall.velocity = { x: 1800, y: 0 }
+  tick(wall, 0.1); assert.ok(wall.candy.x < 1190); assert.ok(wall.velocity.x < 0)
+})
+test('Holding against a wall cannot drag the candy through solid geometry', () => {
+  const w = new RopeWorld(empty({ x: 1100, y: 240 }))
+  w.grab(w.candy); w.moveTarget({ x: 1270, y: 240 })
+  for (let i = 0; i < 240; i++) { w.advance(1 / 120); assert.ok(w.candy.x < 1190) }
+})
+test('Ramp contact redirects the candy and creates spin', () => {
+  const w = new RopeWorld(empty({ x: 740, y: 460 }))
+  const hit = new Set<string>()
+  Matter.Events.on(w.engine, 'collisionStart', event => {
+    for (const pair of event.pairs) { hit.add(pair.bodyA.label); hit.add(pair.bodyB.label) }
+  })
+  tick(w, 0.9)
+  assert.ok(hit.has('ramp')); assert.ok(w.velocity.x > 10); assert.ok(Math.abs(w.angle) > 0.01)
+})
+test('Rubber bumper rebounds a thrown candy', () => {
+  const w = new RopeWorld(empty({ x: 870, y: 350 })); w.velocity = { x: 700, y: 0 }
+  tick(w, 0.2); assert.ok(w.velocity.x < -100)
+})
+test('A held candy cannot win until released', () => {
+  const w = new RopeWorld({ ...empty({ x: 600, y: 350 }), mouth: { x: 600, y: 350 }, surfaces: [] })
+  w.grab(w.candy); tick(w, 0.5); assert.equal(w.outcome, 'playing')
+  w.release(); tick(w, 0.02); assert.equal(w.outcome, 'won')
+})
+function pinch(x: number, y: number, time: number, gapRatio = 0.15): HandFrame {
+  const p = Array.from({ length: 21 }, () => ({ x, y: y + 100, z: 0 }))
+  p[5] = { x: x - 40, y: y + 100, z: 0 }; p[17] = { x: x + 40, y: y + 100, z: 0 }
+  p[4] = { x: x - gapRatio * 40, y, z: 0 }; p[8] = { x: x + gapRatio * 40, y, z: 0 }
+  return frame(x, time, { landmarks_m: p, fist: 1 })
+}
+test('Thumb-index pinch grabs despite curled spare fingers; opening releases', () => {
+  const w = new RopeWorld(playground), input = new CandyInteraction()
+  input.sample(pinch(540, 340, 100), w); assert.ok(w.held)
+  input.sample(pinch(640, 340, 133), w); tick(w, 0.1)
+  assert.ok(w.candy.x > 540)
+  const v = w.velocity
+  input.sample(pinch(640, 340, 166, 0.9), w)
+  assert.ok(!w.held); assert.deepEqual(w.velocity, v)
+})
+test('Loss and teleport release without injecting a throw or cutting', () => {
+  const w = new RopeWorld(playground), input = new CandyInteraction()
+  input.sample(pinch(540, 340, 100), w)
+  assert.equal(input.sample(pinch(1100, 200, 133), w), null); assert.ok(!w.held)
+  input.reset(w); input.sample(pinch(540, 340, 500), w); assert.ok(w.held)
+  input.sample(null, w); assert.ok(!w.held); assert.equal(w.cuts, 0)
+  assert.equal(input.sample(pinch(700, 200, 800), w), null)
+})
+test('Open hand never grabs; pinch hysteresis prevents grip flicker', () => {
+  const w = new RopeWorld(playground), input = new CandyInteraction()
+  input.sample(pinch(540, 340, 100, 0.9), w); assert.ok(!w.held)
+  input.sample(pinch(540, 340, 133, 0.2), w); assert.ok(w.held)
+  input.sample(pinch(540, 340, 166, 0.45), w); assert.ok(w.held)
+  const target = { ...w.target! }
+  input.sample(pinch(620, 340, 199, 0.9), w); assert.ok(!w.held)
+  assert.equal(target.x, 540)
+  assert.equal(input.sample(pinch(560, 340, 199, 0.2), w), null)
+  assert.ok(!w.held, 'duplicate observations must not reacquire')
+})
+test('Pinch thresholds are palm-relative, not camera-distance dependent', () => {
+  const f = pinch(540, 340, 100, 0.2)
+  assert.ok(isPinching(f))
+  f.landmarks_m = f.landmarks_m!.map(p => ({ x: p.x * 0.4, y: p.y * 0.4, z: 0 }))
+  assert.ok(isPinching(f))
+  assert.ok(!isPinching(pinch(540, 340, 133, 0.45)))
+  assert.ok(isPinching(pinch(540, 340, 133, 0.45), true))
+  assert.ok(!isPinching(pinch(540, 340, 166, 0.8), true))
 })
 console.log(`\n${checks} rope-game checks passed`)

@@ -147,7 +147,7 @@ export class SandboxWorld {
   private static requiredSubSteps(scene: SandboxScene): number {
     let worst = 0
     for (const e of scene.entities) {
-      if (e.kind !== 'spring') continue
+      if (e.kind !== 'spring' && e.kind !== 'spring_h') continue
       worst = Math.max(worst, Math.sqrt(e.stiffness_n_per_m / Math.max(e.mass_kg, 1e-6)))
     }
     if (worst === 0) return 1
@@ -224,6 +224,18 @@ export class SandboxWorld {
         return { entity: e, main: body }
       }
 
+      case 'wall_v': {
+        // position_m is the base centre; the body stands up from it.
+        const h = mToPx(e.height_m)
+        const body = Bodies.rectangle(at.x, at.y - h / 2, mToPx(e.thickness_m), h, {
+          isStatic: true,
+          friction: e.friction,
+          restitution: e.restitution,
+          label: e.id,
+        })
+        return { entity: e, main: body }
+      }
+
       case 'pendulum': {
         const L = mToPx(e.length_m)
         const th = e.start_angle_deg * DEG
@@ -253,6 +265,23 @@ export class SandboxWorld {
         // No Matter constraint: the restoring force is applied explicitly in
         // step() so that k is a real stiffness in N/m.
         return { entity: e, main: bob, anchor }
+      }
+
+      case 'spring_h': {
+        const anchor = Bodies.circle(at.x, at.y, 5, { isStatic: true, label: `${e.id}_anchor` })
+        const dir = e.direction < 0 ? -1 : 1
+        const reach = mToPx(e.rest_length_m + e.start_extension_m)
+        const size = mToPx(e.block_size_m)
+        const block = Bodies.rectangle(at.x + dir * reach, at.y, size, size, {
+          label: e.id,
+          frictionAir: 0,
+          restitution: 0.3,
+          friction: e.friction,
+          frictionStatic: e.friction === 0 ? 0 : 0.5,
+        })
+        Body.setMass(block, e.mass_kg)
+        // Same explicit Hooke force as the hanging spring, so k is real.
+        return { entity: e, main: block, anchor }
       }
 
       case 'magnet_region': {
@@ -288,7 +317,7 @@ export class SandboxWorld {
 
   private applySpringForces(): void {
     for (const b of this.built) {
-      if (b.entity.kind !== 'spring' || !b.main || !b.anchor) continue
+      if ((b.entity.kind !== 'spring' && b.entity.kind !== 'spring_h') || !b.main || !b.anchor) continue
       const e = b.entity
 
       const dx = b.main.position.x - b.anchor.position.x
@@ -572,7 +601,7 @@ export class SandboxWorld {
       })
     }
 
-    if (b.entity.kind === 'spring' && b.anchor) {
+    if ((b.entity.kind === 'spring' || b.entity.kind === 'spring_h') && b.anchor) {
       const dx = body.position.x - b.anchor.position.x
       const dy = body.position.y - b.anchor.position.y
       const len = Math.hypot(dx, dy)
@@ -672,7 +701,7 @@ export class SandboxWorld {
   springEnergy_j(): number {
     let total = 0
     for (const b of this.built) {
-      if (b.entity.kind !== 'spring' || !b.main || !b.anchor) continue
+      if ((b.entity.kind !== 'spring' && b.entity.kind !== 'spring_h') || !b.main || !b.anchor) continue
       const dx = b.main.position.x - b.anchor.position.x
       const dy = b.main.position.y - b.anchor.position.y
       const ext = pxToM(Math.hypot(dx, dy)) - b.entity.rest_length_m

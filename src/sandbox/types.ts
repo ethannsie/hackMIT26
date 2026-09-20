@@ -21,8 +21,10 @@ export const ENTITY_KINDS = [
   'box',
   'ramp',
   'wall',
+  'wall_v',
   'pendulum',
   'spring',
+  'spring_h',
   'magnet_region',
 ] as const
 export type EntityKind = (typeof ENTITY_KINDS)[number]
@@ -73,6 +75,20 @@ export interface WallEntity extends EntityBase {
   restitution: number
 }
 
+/**
+ * A wall that stands on the floor. `position_m` is the centre of its BASE, so
+ * placing one is "put a barrier here" rather than "centre a rectangle 0.6 m up
+ * and hope it meets the ground". The free-angle `wall` remains for everything
+ * else.
+ */
+export interface VerticalWallEntity extends EntityBase {
+  kind: 'wall_v'
+  height_m: number
+  thickness_m: number
+  friction: number
+  restitution: number
+}
+
 export interface PendulumEntity extends EntityBase {
   kind: 'pendulum'
   length_m: number
@@ -93,6 +109,27 @@ export interface SpringEntity extends EntityBase {
   start_extension_m: number
 }
 
+/**
+ * A spring lying along the floor: anchor plate at `position_m`, a block on the
+ * end, sliding on the ground. Same real stiffness as the hanging spring, so
+ * omega = sqrt(k/m) still holds — and on a frictionless block it is the
+ * textbook horizontal SHM, which the hanging one is not (gravity shifts its
+ * equilibrium). The block is what hits other things.
+ */
+export interface HorizontalSpringEntity extends EntityBase {
+  kind: 'spring_h'
+  rest_length_m: number
+  stiffness_n_per_m: number
+  mass_kg: number
+  block_size_m: number
+  /** Initial displacement from rest along the axis, metres. The amplitude. */
+  start_extension_m: number
+  /** +1 runs to the right of the anchor, -1 to the left. */
+  direction: number
+  /** The block's own friction. 0 slides freely on the ground. */
+  friction: number
+}
+
 export interface MagnetRegionEntity extends EntityBase {
   kind: 'magnet_region'
   width_m: number
@@ -106,12 +143,14 @@ export type Entity =
   | BoxEntity
   | RampEntity
   | WallEntity
+  | VerticalWallEntity
   | PendulumEntity
   | SpringEntity
+  | HorizontalSpringEntity
   | MagnetRegionEntity
 
 /** Kinds that never move and can never be pushed by the hand. */
-export const STATIC_ENTITY_KINDS: readonly EntityKind[] = ['ramp', 'wall', 'magnet_region']
+export const STATIC_ENTITY_KINDS: readonly EntityKind[] = ['ramp', 'wall', 'wall_v', 'magnet_region']
 
 /**
  * The playable area.

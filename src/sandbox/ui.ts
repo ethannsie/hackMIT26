@@ -9,6 +9,7 @@
  */
 import { SandboxWorld } from './world.ts'
 import { InvariantTracker, type Invariants } from './invariants.ts'
+import { checkInteractions, type InteractionReport } from './interactions.ts'
 import { loadPreset, SANDBOX_PRESETS } from './presets.ts'
 import { FIELDS, HINTS, ICONS, LABELS, makeEntity, nextId } from './palette.ts'
 import { ENTITY_KINDS, isStaticKind, type Entity, type EntityKind, type SandboxScene } from './types.ts'
@@ -23,6 +24,15 @@ export class SandboxMode {
   private view: SandboxView
   private tracker = new InvariantTracker()
   private handCoupling = new HandCoupling()
+
+  /**
+   * The interaction rule: every component must meet at least one other, or the
+   * scene does not run. The report comes from a dry run of the authored scene
+   * (interactions.ts). Edits schedule a re-check a beat later rather than
+   * running one per slider tick.
+   */
+  private report: InteractionReport | null = null
+  private checkAt: number | null = null
 
   private armed: EntityKind | null = null
   private selectedId: string | null = null
@@ -42,6 +52,8 @@ export class SandboxMode {
     private beforeChange: (label: string) => void = () => {},
     /** Lets the app discard playback frames when this scene is rebuilt. */
     private afterSceneChange: () => void = () => {},
+    /** Asks the app to stop the clock, with the reason to show. */
+    private requestPause: (reason: string) => void = () => {},
   ) {
     this.scene = loadPreset('chain_reaction')
     this.world = new SandboxWorld(this.scene)
@@ -61,8 +73,31 @@ export class SandboxMode {
     // Frame the arena on entry, so its walls and extent are visible rather than
     // off-screen at whatever zoom was left behind.
     this.view.fit(this.scene.arena)
+    this.runCheck()
     this.renderPanel()
     this.setStatus('click a component to add · drag to move · wheel zooms · space pauses')
+  }
+
+  // --- the interaction rule ------------------------------------------------
+
+  private runCheck(): void {
+    this.report = checkInteractions(this.scene)
+    this.checkAt = null
+    this.renderInteractions()
+  }
+
+  /** Ids that touch nothing in the dry run. Empty when the scene may run. */
+  private isolatedIds(): string[] {
+    return this.report?.isolated ?? []
+  }
+
+  private blockedReason(): string | null {
+    const iso = this.isolatedIds()
+    if (iso.length === 0) return null
+    const list = iso.join(', ')
+    return iso.length === 1
+      ? `${list} interacts with nothing — move it into something's path before running`
+      : `${list} interact with nothing — every component must meet another before running`
   }
 
   stop(): void {
@@ -91,6 +126,8 @@ export class SandboxMode {
     this.tracker.reset()
     this.reportedEscape = false
     this.afterSceneChange()
+    // A beat after the last edit, not on every slider tick.
+    this.checkAt = performance.now() + 180
   }
 
   reset(): void {
@@ -100,6 +137,12 @@ export class SandboxMode {
 
   /** Advance exactly one fixed step, for frame-by-frame inspection. */
   stepOnce(): void {
+    if (this.checkAt !== null) this.runCheck()
+    const reason = this.blockedReason()
+    if (reason) {
+      this.setStatus(reason, 'warn')
+      return
+    }
     this.world.step()
   }
 
@@ -194,13 +237,17 @@ export class SandboxMode {
     return this.view.toScene(clientX, clientY)
   }
 
+  private takenIds(): string[] {
+    return this.scene.entities.map((e) => e.id)
+  }
+
   /** Copy the selection, offset so it is visible and immediately selected. */
   duplicateSelection(): void {
     const entity = this.scene.entities.find((x) => x.id === this.selectedId)
     if (!entity) return
     this.beforeChange(`before duplicating ${entity.id}`)
     const copy = structuredClone(entity) as Entity
-    copy.id = nextId(entity.kind)
+    copy.id = nextId(entity.kind, this.takenIds())
     copy.position_m = [entity.position_m[0] + 0.4, entity.position_m[1] + 0.4]
     this.scene.entities.push(copy)
     this.selectedId = copy.id
@@ -210,6 +257,16 @@ export class SandboxMode {
   }
 
   frame(elapsedMs: number, running: boolean, hand: HandFrame | null = null): void {
+    // A pending check runs now if the clock is about to advance, so a scene
+    // can never take even one step before its verdict is in. Otherwise it waits
+    // out the debounce so slider drags stay smooth.
+    if (this.checkAt !== null && (running || performance.now() >= this.checkAt)) this.runCheck()
+    const blocked = this.blockedReason()
+    if (running && blocked) {
+      running = false
+      this.requestPause(blocked)
+    }
+
     let couplingState = this.handCoupling.update(this.world, hand)
     if (running && !this.dragging) {
       this.world.advanceWith(elapsedMs, () => {
@@ -224,6 +281,10 @@ export class SandboxMode {
       paths: this.lastPaths,
       forces: this.showForces ? this.forcesOnSelection() : [],
       hand,
+      isolated: this.isolatedIds(),
+      // Predicted paths only while the scene sits at its authored start; once
+      // it runs, the traced paths take over.
+      previews: this.world.steps === 0 ? this.report?.paths ?? null : null,
     })
     this.renderInvariants(this.tracker.sample(this.world))
 
@@ -249,7 +310,7 @@ export class SandboxMode {
 
     if (this.armed) {
       this.beforeChange(`before placing ${LABELS[this.armed]}`)
-      const entity = makeEntity(this.armed, at)
+      const entity = makeEntity(this.armed, at, this.takenIds(), this.scene.ground)
       this.scene.entities.push(entity)
       this.selectedId = entity.id
       this.armed = null
@@ -487,11 +548,39 @@ export class SandboxMode {
       this.aside.appendChild(empty)
     }
 
+    // Interaction rule, filled by runCheck().
+    const inter = document.createElement('div')
+    inter.className = 'sb-block'
+    inter.id = 'sb-interactions'
+    this.aside.appendChild(inter)
+    this.renderInteractions()
+
     // Conservation panel, filled each frame.
     const laws = document.createElement('div')
     laws.className = 'sb-block'
     laws.id = 'sb-invariants'
     this.aside.appendChild(laws)
+  }
+
+  private renderInteractions(): void {
+    const el = this.aside.querySelector('#sb-interactions')
+    if (!el || !this.report) return
+    const r = this.report
+    const rows = r.ids
+      .map((id) => {
+        const partners = r.partners[id] ?? []
+        const iso = partners.length === 0
+        const withText = iso
+          ? 'isolated'
+          : partners.map((c) => `${c.id} <i>${c.at_s.toFixed(1)} s</i>`).join(', ')
+        return `<div class="inter${iso ? ' iso' : ''}"><span class="who">${id}</span><span class="with">${withText}</span></div>`
+      })
+      .join('')
+    const blocked = this.blockedReason()
+    el.innerHTML = `<h4>Interactions</h4>
+      <p class="sb-hint">Every component must meet another within ${r.horizon_s} s of the start, or the scene will not run. Dotted paths show where things will go.</p>
+      ${rows || '<p class="sb-hint">Nothing placed yet.</p>'}
+      ${blocked ? `<div class="sb-blocked">${blocked}</div>` : ''}`
   }
 
   private slider(

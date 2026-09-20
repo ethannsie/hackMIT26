@@ -18,16 +18,20 @@
  * timeout fires, we fall back, and the UI shows which backend answered.
  */
 import 'dotenv/config'
-import express from 'express'
+import express, { type Request, type Response, type ErrorRequestHandler } from 'express'
+import { problemStatement } from '../src/spec/describe.ts'
+import { object, validAsk, validHand } from './validation.ts'
+import { voiceStatus, type VoiceState } from './voice.ts'
 import OpenAI from 'openai'
 import { RESPONSE_FORMAT } from '../src/spec/schema.ts'
 import { validateSpec } from '../src/spec/validate.ts'
 import { SYSTEM_PROMPT, USER_PROMPT } from './prompt.ts'
-import { generatePrompt, pickType, numbersConsistent, TUTOR_SYSTEM } from './generate.ts'
+import { generatePrompt, pickType, TUTOR_SYSTEM } from './generate.ts'
 import { Corpus } from './corpus.ts'
 import { chat, nativeBase } from './ollama.ts'
 import { PROBLEM_SPEC_SCHEMA } from '../src/spec/schema.ts'
 
+const HOST = process.env['API_BIND'] ?? '127.0.0.1'
 const PORT = Number(process.env['API_PORT'] ?? 8787)
 const MODEL = process.env['OPENAI_MODEL'] ?? 'gpt-4o'
 // Optional on-device backend: an OpenAI-compatible base URL, e.g. the GX10's
@@ -49,6 +53,26 @@ const DEEPGRAM_MODEL = process.env['DEEPGRAM_MODEL'] ?? 'nova-3'
 const CORPUS_DIR = process.env['CORPUS_DIR'] ?? new URL('../corpus', import.meta.url).pathname
 
 const app = express()
+app.disable('x-powered-by')
+let modelJobs = 0
+// Promise rejection forwarding is explicit because the runtime is Express 4.
+function post(path: string, handler: (req: Request, res: Response) => Promise<void>): void {
+  app.post(path, (req, res, next) => {
+    const model = ['/api/ask', '/api/generate', '/api/extract'].includes(path)
+    if (model && modelJobs >= 2) { res.status(429).json({ error: 'The model is busy. Try again shortly.' }); return }
+    if (model) modelJobs++
+    // Keep the slot until actual work ends, even when a browser disconnects.
+    void handler(req, res).catch(next).finally(() => { if (model) modelJobs-- })
+  })
+}
+const allowedOrigins = new Set((process.env['APP_ORIGINS'] ?? 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173').split(','))
+app.use((req, res, next) => {
+  const host = req.headers.host?.split(':')[0]
+  if (!host || !['localhost', '127.0.0.1'].includes(host) || (req.headers.origin && !allowedOrigins.has(req.headers.origin))) {
+    res.status(403).json({ error: 'untrusted host or origin' }); return
+  }
+  next()
+})
 // Base64 data URLs are bulky even after compression; 12 MB is ample headroom.
 app.use(express.json({ limit: '12mb' }))
 // Recorded questions arrive as raw audio (webm/opus from MediaRecorder).
@@ -64,21 +88,21 @@ const corpus = new Corpus(CORPUS_DIR)
  * and every 30 s, with a 4 s timeout, so a venue Wi-Fi that drops mid-demo
  * takes the mic with it within half a minute.
  */
-type VoiceState = 'ready' | 'offline' | 'no-key'
 let voiceState: VoiceState = DEEPGRAM_KEY ? 'offline' : 'no-key'
+let voiceFailureUntil = 0
 async function probeVoice(): Promise<void> {
-  if (!DEEPGRAM_KEY) return
+  if (!DEEPGRAM_KEY || Date.now() < voiceFailureUntil) return
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 4000)
   try {
-    // Any answer from the host means the route is open; the key is checked
-    // for real on the first transcription.
-    await fetch('https://api.deepgram.com/v1/projects', {
+    // Deepgram's documented credential-validation endpoint requires no project-list permission.
+    const response = await fetch('https://api.deepgram.com/v1/auth/token', {
       method: 'GET',
       headers: { Authorization: `Token ${DEEPGRAM_KEY}` },
       signal: controller.signal,
     })
-    voiceState = 'ready'
+    voiceState = voiceStatus(response.status)
+    await response.body?.cancel()
   } catch {
     voiceState = 'offline'
   } finally {
@@ -108,6 +132,7 @@ let latestHandReceivedAt = 0
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
+    service: 'hackmit-api',
     model: MODEL,
     openai_key_present: Boolean(apiKey),
     local_endpoint: LOCAL_URL ?? null,
@@ -127,13 +152,16 @@ app.get('/api/health', (_req, res) => {
  * the same path. Structured output means the statement and its numbers
  * cannot disagree: the model writes both in one reply.
  */
-app.post('/api/generate', async (req, res) => {
+post('/api/generate', async (req, res) => {
   const started = Date.now()
   if (!local) {
     res.status(503).json({ error: 'No local model configured (EXTRACT_LOCAL_URL); problem generation runs on the GX10.' })
     return
   }
-  const type = pickType((req.body as { problem_type?: unknown })?.problem_type as string | undefined)
+  if (!object(req.body) || (req.body.problem_type !== undefined && typeof req.body.problem_type !== 'string')) {
+    res.status(400).json({ error: 'body must contain an optional problem_type string' }); return
+  }
+  const type = pickType(req.body.problem_type as string | undefined)
   // Three tries: at a creative temperature with reasoning off, a draft now
   // and then fails validation or states one number and records another. A
   // fresh draft is ~5 s; a "try again" button at a demo table is worse.
@@ -162,12 +190,9 @@ app.post('/api/generate', async (req, res) => {
         lastError = `model wrote a ${result.spec.problem_type} problem instead of ${type}`
         continue
       }
-      const mismatch = numbersConsistent(result.spec)
-      if (mismatch) {
-        lastError = mismatch
-        console.warn(`generate attempt ${attempt + 1}: ${mismatch}`)
-        continue
-      }
+      // Render every quantity and direction from the accepted schema. Model prose
+      // cannot override a sign, unit, shape or value in the displayed problem.
+      result.spec.raw_text = problemStatement(result.spec)
       res.json({ ...result, source: 'local' as const, setting, elapsed_ms: Date.now() - started })
       return
     } catch (err) {
@@ -182,14 +207,14 @@ app.post('/api/generate', async (req, res) => {
  * Answer a visitor's question with the local model, grounded in the textbook
  * passages that match it and in the problem currently on screen.
  */
-app.post('/api/ask', async (req, res) => {
+post('/api/ask', async (req, res) => {
   const started = Date.now()
-  const body = req.body as { question?: unknown; context?: { raw_text?: string; solutions?: string[] } }
-  const question = typeof body?.question === 'string' ? body.question.trim() : ''
-  if (!question) {
-    res.status(400).json({ error: 'body.question must be a non-empty string' })
+  if (!validAsk(req.body)) {
+    res.status(400).json({ error: 'Provide a question (1–2000 characters) and valid, bounded context strings.' })
     return
   }
+  const body = req.body
+  const question = body.question.trim()
   if (!local) {
     res.status(503).json({ error: 'No local model configured (EXTRACT_LOCAL_URL); questions are answered on the GX10.' })
     return
@@ -197,9 +222,10 @@ app.post('/api/ask', async (req, res) => {
   const passages = corpus.search(question, 4)
   const parts: string[] = []
   if (body.context?.raw_text) {
-    parts.push(`The problem on screen right now:\n${body.context.raw_text}`)
+    parts.push(`Original problem statement (the visitor may have edited its givens):\n${body.context.raw_text}`)
     if (body.context.solutions?.length) parts.push(`Its worked answers:\n${body.context.solutions.join('\n')}`)
   }
+  if (body.context?.current_givens) parts.push(`Current experiment givens (these override the original statement):\n${body.context.current_givens}`)
   if (passages.length) {
     parts.push(
       'Textbook passages that may help:\n' +
@@ -236,14 +262,14 @@ app.post('/api/ask', async (req, res) => {
  * Speech to text through Deepgram. The key never leaves this process: the
  * browser posts the recording here and gets words back.
  */
-app.post('/api/transcribe', async (req, res) => {
+post('/api/transcribe', async (req, res) => {
   const started = Date.now()
   if (!DEEPGRAM_KEY) {
     res.status(503).json({ error: 'No DEEPGRAM_API_KEY in .env — type the question instead.' })
     return
   }
-  if (voiceState === 'offline') {
-    res.status(503).json({ error: 'Voice needs the internet and the box is offline — type the question instead.' })
+  if (voiceState !== 'ready') {
+    res.status(503).json({ error: `Voice is ${voiceState}. Check connectivity and credentials, or type the question.` })
     return
   }
   const audio = req.body as Buffer
@@ -253,16 +279,17 @@ app.post('/api/transcribe', async (req, res) => {
   }
   const url = `https://api.deepgram.com/v1/listen?model=${encodeURIComponent(DEEPGRAM_MODEL)}&smart_format=true&language=en`
   try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 15_000)
     const dg = await fetch(url, {
       method: 'POST',
       headers: { Authorization: `Token ${DEEPGRAM_KEY}`, 'Content-Type': req.headers['content-type'] ?? 'audio/webm' },
       body: new Uint8Array(audio),
-      signal: controller.signal,
+      signal: AbortSignal.timeout(15_000),
     })
-    clearTimeout(timer)
-    if (!dg.ok) throw new Error(`Deepgram ${dg.status}: ${(await dg.text()).slice(0, 200)}`)
+    if (!dg.ok) {
+      voiceState = voiceStatus(dg.status)
+      voiceFailureUntil = Date.now() + 30_000
+      throw new Error(`Deepgram ${dg.status}: ${(await dg.text()).slice(0, 200)}`)
+    }
     const data = (await dg.json()) as {
       results?: { channels?: { alternatives?: { transcript?: string; confidence?: number }[] }[] }
     }
@@ -282,16 +309,7 @@ app.get('/api/hand/frame', (_req, res) => {
 
 app.post('/api/hand/frame', (req, res) => {
   const frame = req.body as Partial<HandFramePayload>
-  if (
-    !frame ||
-    typeof frame !== 'object' ||
-    typeof frame.t_ms !== 'number' ||
-    (frame.handedness !== 'left' && frame.handedness !== 'right') ||
-    typeof frame.confidence !== 'number' ||
-    typeof frame.pinch !== 'number' ||
-    !frame.palm ||
-    !frame.palm_velocity
-  ) {
+  if (!validHand(frame)) {
     res.status(400).json({ error: 'invalid hand frame' })
     return
   }
@@ -348,7 +366,7 @@ async function tryLocal(image: string): Promise<{ raw: unknown } | { error: stri
   }
 }
 
-app.post('/api/extract', async (req, res) => {
+post('/api/extract', async (req, res) => {
   const started = Date.now()
   const image = (req.body as { image?: unknown })?.image
 
@@ -377,7 +395,7 @@ app.post('/api/extract', async (req, res) => {
       const completion = await openai.chat.completions.create({
         model: MODEL,
         ...extractionRequest(image),
-      })
+      }, { timeout: 45_000, maxRetries: 0 })
       const text = completion.choices[0]?.message?.content
       if (!text) throw new Error('model returned an empty response')
       raw = JSON.parse(text)
@@ -396,8 +414,32 @@ app.post('/api/extract', async (req, res) => {
   })
 })
 
-app.listen(PORT, () => {
-  console.log(`extract API on http://localhost:${PORT}`)
+// Readiness is separate from process liveness and names unavailable features.
+app.get('/api/ready', async (_req, res, next) => {
+  try {
+    let names: string[] = []
+    if (OLLAMA) {
+      const response = await fetch(`${OLLAMA}/api/tags`, { signal: AbortSignal.timeout(4000) })
+      if (!response.ok) throw new Error(`Ollama health returned ${response.status}`)
+      const data = await response.json() as { models?: { name: string }[] }
+      names = data.models?.map(m => m.name.replace(/:latest$/, '')) ?? []
+    }
+    const extraction = Boolean(openai) || names.includes(LOCAL_MODEL.replace(/:latest$/, ''))
+    const text = names.includes(TEXT_MODEL.replace(/:latest$/, ''))
+    res.status(extraction && text ? 200 : 503).json({ ok: extraction && text, service: 'hackmit-api', extraction, text,
+      voice: voiceState, corpus: corpus.size > 0, models: names })
+  } catch (error) { next(error) }
+})
+const errors: ErrorRequestHandler = (error, _req, res, _next) => {
+  const status = typeof error.status === 'number' && error.status >= 400 && error.status < 500 ? error.status : 503
+  res.status(status).json({ error: status < 500 ? 'Invalid or oversized request body' : 'Service unavailable. Check the API log and model service.' })
+  if (status >= 500) console.error('API request failed:', error instanceof Error ? error.message : 'unknown error')
+}
+app.use(errors)
+
+const server = app.listen(PORT, HOST, () => {
+  const address = server.address()
+  console.log(`API listening on http://${HOST}:${typeof address === 'object' && address ? address.port : PORT}`)
   console.log(`  model            ${MODEL}`)
   console.log(`  OPENAI_API_KEY   ${apiKey ? 'present' : 'MISSING — see .env.example'}`)
   console.log(`  local endpoint   ${LOCAL_URL ? `${LOCAL_URL} (${LOCAL_MODEL}, ${LOCAL_TIMEOUT_MS} ms)` : 'none (set EXTRACT_LOCAL_URL for the GX10)'}`)
@@ -405,3 +447,6 @@ app.listen(PORT, () => {
   console.log(`  deepgram         ${DEEPGRAM_KEY ? `key present (${DEEPGRAM_MODEL})` : 'no key — Ask box is typed only'}`)
   console.log(`  corpus           ${corpus.size ? `${corpus.size} passages from ${corpus.books.join(', ')}` : 'empty — see corpus/README.md'}`)
 })
+
+server.requestTimeout = 20_000
+server.headersTimeout = 10_000

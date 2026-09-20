@@ -39,6 +39,7 @@ export const matterVelToMs = (v: number): number => v / (PX_PER_M * BASE_DELTA_S
 
 /** Angular velocity is normalised the same way: radians per _baseDelta. */
 export const matterAngVelToRads = (w: number): number => w / BASE_DELTA_S
+export const radsToMatterAngVel = (w: number): number => w * BASE_DELTA_S
 
 /**
  * Matter applies `force.y += mass · gravity.y · gravity.scale` each step, giving

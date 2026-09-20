@@ -8,7 +8,7 @@
  * builders, same derivation. The model writes the statement AND the numbers;
  * nothing else has to parse the statement afterwards.
  */
-import { PROBLEM_TYPES, type ProblemSpec, type ProblemType } from '../src/spec/types.ts'
+import { PROBLEM_TYPES, type ProblemType } from '../src/spec/types.ts'
 
 /**
  * Which `given` fields a generated problem of each type must fill, with the
@@ -19,7 +19,7 @@ const FIELDS: Record<ProblemType, string> = {
   projectile:
     'v0_ms (3–30), launch_angle_deg (10–80), h0_m (0–10). asked_for from: time_of_flight_s, range_m, apex_height_m.',
   inclined_plane:
-    'incline_angle_deg (10–50), ramp_length_m (0.5–5), mass_kg (0.5–20), mu_kinetic (0–0.5, or 0 if frictionless), initial_velocity_ms (0 unless stated), body_motion ("sliding" for a block, "rolling" for a ball/cylinder). asked_for from: acceleration_ms2, normal_force_n, time_to_bottom_s, final_velocity_ms.',
+    'incline_angle_deg (10–50), ramp_length_m (0.5–5), mass_kg (0.5–20), mu_kinetic (0–0.5, or 0 if frictionless), initial_velocity_ms (0 unless stated), body_motion ("sliding" for a block, "rolling" for a ball/cylinder), body_shape (sphere, disc or hoop, REQUIRED when rolling). asked_for from: acceleration_ms2, normal_force_n, time_to_bottom_s, final_velocity_ms.',
   pendulum:
     'length_m (0.2–4), theta0_deg (5–60), mass_kg (0.1–10). asked_for from: period_s, angular_frequency_rads, max_speed_ms, tension_n.',
   collision_1d:
@@ -79,39 +79,3 @@ export const TUTOR_SYSTEM = `You are a physics tutor standing at a science-fair 
 Answer in plain spoken English, at most 120 words, no LaTeX, no bullet lists, no headings. Give the physical idea first, then one concrete number or example if the current problem provides one. Quote only numbers that appear in the problem or its worked answers; do not calculate new ones — describe the step in words instead ("gravity's pull along the slope minus friction"). If the question is not about physics, say so kindly in one sentence and offer to talk about the simulation instead.
 
 You may be given passages from an introductory physics textbook and the problem currently on screen. Prefer them over memory when they cover the question; never claim a passage says something it does not. Do not mention that you were given passages.`
-
-/**
- * The statement and the schema must agree: every number the schema records
- * has to be one the text states. With reasoning off the model occasionally
- * writes "kicked horizontally" and records a 30° angle; this catches that so
- * the caller can ask for another draft rather than show a student a problem
- * whose animation does not match its words.
- *
- * Returns a description of the first mismatch, or null when consistent.
- */
-export function numbersConsistent(spec: ProblemSpec): string | null {
-  const inText = new Set<number>()
-  for (const m of spec.raw_text.matchAll(/-?\d+(?:\.\d+)?/g)) inText.add(Number(m[0]))
-  const stated = (v: number): boolean => {
-    for (const t of inText) {
-      // Same value, or the same value before a unit conversion the model
-      // was told to do (cm -> m, g -> kg, km/h -> m/s), or a sign flip.
-      for (const f of [1, 100, 1000, 3.6, 1 / 100, 1 / 1000, 1 / 3.6]) {
-        if (Math.abs(Math.abs(t) * f - Math.abs(v)) <= 0.011 * Math.max(1, Math.abs(v))) return true
-      }
-    }
-    return false
-  }
-  for (const [key, value] of Object.entries(spec.given)) {
-    if (typeof value !== 'number') continue
-    // Defaults the prompt allows the model to fill in without stating them.
-    if (key === 'gravity_ms2' && Math.abs(value - 9.81) < 0.01) continue
-    if (key === 'initial_velocity_ms' && value === 0) continue
-    if (key === 'restitution' && (value === 0 || value === 1)) continue
-    if (key === 'h0_m' && value === 0) continue
-    if (key === 'radius_m' && value === 0 && spec.problem_type === 'rotating_frame') continue
-    if (key === 'launch_angle_deg' && value === 0) continue
-    if (!stated(value)) return `given.${key} = ${value} does not appear in the problem text`
-  }
-  return null
-}

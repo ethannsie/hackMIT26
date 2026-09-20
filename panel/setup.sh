@@ -16,9 +16,11 @@ say "Python dependencies"
 # ARM64 note: mediapipe ships aarch64 manylinux wheels, but if pip falls back
 # to a source build on this box, install python3-opencv from apt and run the
 # panel without tracking — scan and shutdown do not need MediaPipe.
-python3 -m pip install --user --upgrade -r "$REPO/requirements.txt"
+[[ -x "$REPO/.venv/bin/python" ]] || python3 -m venv --system-site-packages "$REPO/.venv"
+"$REPO/.venv/bin/python" -m pip install -r "$REPO/requirements.txt"
 
 say "Hand landmark model"
+mkdir -p "$HERE/models"
 if [[ -f "$MODEL" ]]; then
   echo "already present: $MODEL"
 elif [[ -f "$REPO/hand_landmarker.task" ]]; then
@@ -36,7 +38,7 @@ mkdir -p "$REPO/captures"
 echo "$REPO/captures"
 
 say "Check"
-python3 - <<'PY'
+"$REPO/.venv/bin/python" - <<'PY'
 import importlib.util as u
 for mod in ("cv2", "mediapipe", "numpy"):
     print(f"  {mod:12s} {'ok' if u.find_spec(mod) else 'MISSING'}")
@@ -46,7 +48,7 @@ cat <<'EOF'
 
 Ready. Start it with:
 
-  python3 panel/panel_server.py          # http://localhost:8770
+  .venv/bin/python panel/panel_server.py          # http://localhost:8770
   panel/launch_panel.sh                  # Chromium kiosk on the 7in screen
 
 EOF

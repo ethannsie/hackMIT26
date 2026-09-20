@@ -124,6 +124,12 @@ export class HandCoupling {
   /** Fist latch with hysteresis, so a push does not stutter at the threshold. */
   private fistLatched = false
 
+  reset(): CouplingState {
+    this.grabbedId = null
+    this.fistLatched = false
+    return IDLE
+  }
+
   /** The latched fist state, so the overlay draws what the coupling is doing. */
   get fisted(): boolean {
     return this.fistLatched
@@ -155,6 +161,7 @@ export class HandCoupling {
       } else {
         const [holdX, holdY] = this.grabPoint(hand)
         world.setPositionM(this.grabbedId, [holdX, holdY])
+        world.setVelocityMs(this.grabbedId, [0, 0])
         return {
           contact: true,
           penetration_m: Math.max(0, -hand.palm_m.z),

@@ -9,7 +9,7 @@
  */
 import Matter from 'matter-js'
 import { mToPx, pxToM, msToMatterVel, DEG } from './units.ts'
-import type { SimParams } from './params.ts'
+import { INERTIA_COEFF, type SimParams } from './params.ts'
 
 const { Bodies, Body, Composite, Constraint } = Matter
 
@@ -205,6 +205,10 @@ function inclinedPlane(p: Extract<SimParams, { kind: 'inclined_plane' }>): OpenS
     : Bodies.rectangle(start.x, start.y, size, size, { ...common, angle: th })
 
   Body.setMass(block, p.mass_kg)
+  if (isRolling) {
+    Body.setInertia(block, INERTIA_COEFF[p.shape] * p.mass_kg * (size / 2) ** 2)
+    Body.setAngularVelocity(block, msToMatterVel(p.v0_ms) / (size / 2))
+  }
   if (p.v0_ms !== 0) {
     Body.setVelocity(block, {
       x: msToMatterVel(p.v0_ms * down.x),
@@ -238,7 +242,7 @@ function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): OpenScene {
 
   // Pivot high enough that the bob always swings above the ground.
   const pivotY = -L - mToPx(0.3)
-  const pivot = Bodies.circle(0, pivotY, 6, { isStatic: true, label: 'pivot' })
+  const pivot = Bodies.circle(0, pivotY, 6, { isStatic: true, isSensor: true, label: 'pivot' })
 
   const bobR = mToPx(0.05)
   const bob = Bodies.circle(L * Math.sin(th), pivotY + L * Math.cos(th), bobR, {
@@ -326,6 +330,7 @@ function rollingWithoutSlipping(
     restitution: 0,
   })
   Body.setMass(wheel, p.mass_kg)
+  Body.setInertia(wheel, INERTIA_COEFF[p.shape] * p.mass_kg * r * r)
   Body.setVelocity(wheel, { x: msToMatterVel(p.v_ms), y: 0 })
   // omega = v/r is the rolling constraint, applied here and held every step.
   Body.setAngularVelocity(wheel, msToMatterVel(p.v_ms) / r)
@@ -349,7 +354,7 @@ function circularMotion(p: Extract<SimParams, { kind: 'circular_motion' }>): Ope
   const R = mToPx(p.radius_m)
   const centreY = -R - mToPx(0.4)
 
-  const pivot = Bodies.circle(0, centreY, 5, { isStatic: true, label: 'pivot' })
+  const pivot = Bodies.circle(0, centreY, 5, { isStatic: true, isSensor: true, label: 'pivot' })
   const ball = Bodies.circle(R, centreY, mToPx(0.05), {
     label: 'ball',
     frictionAir: 0,
@@ -435,7 +440,7 @@ function rotatingFrame(p: Extract<SimParams, { kind: 'rotating_frame' }>): OpenS
 
   // A marker at the rotation axis, so the origin the pseudo-forces refer to is
   // visible rather than implied.
-  const axis = Bodies.circle(0, 0, 4, { isStatic: true, label: 'pivot' })
+  const axis = Bodies.circle(0, 0, 4, { isStatic: true, isSensor: true, label: 'pivot' })
 
   const reach = Math.max(2.5, p.r0_m + p.speed_ms * 2)
   return {
@@ -453,7 +458,7 @@ function angularMomentumPoint(
 ): OpenScene {
   // The particle travels horizontally along a line offset from the origin by
   // the impact parameter. The origin is the whole point, so it gets a marker.
-  const origin = Bodies.circle(0, 0, 5, { isStatic: true, label: 'pivot' })
+  const origin = Bodies.circle(0, 0, 5, { isStatic: true, isSensor: true, label: 'pivot' })
   // Matter's +y is down, so a POSITIVE impact parameter puts the particle below
   // the origin on screen. That is what makes L = +mvd (counter-clockwise
   // positive) rather than -mvd, matching the sign convention in analytic.ts.

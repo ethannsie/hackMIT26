@@ -15,6 +15,8 @@
  */
 import Matter from 'matter-js'
 import { msToMatterVel } from './units.ts'
+import { MAX_SPEED_MS } from './limits.ts'
+export { MAX_SPEED_MS } from './limits.ts'
 
 const { Body } = Matter
 
@@ -29,13 +31,6 @@ export interface PxBox {
 
 /** Bounce kept when a body is pushed back inside. Matches the border walls. */
 const CONTAIN_RESTITUTION = 0.6
-
-/**
- * Speed ceiling, m/s. Nothing in the library or a human throw legitimately
- * exceeds this; a tracking glitch that reports a 200 m/s palm does. Above it,
- * tunneling is guaranteed and the readouts are nonsense.
- */
-export const MAX_SPEED_MS = 60
 
 /**
  * Half extents of the body's actual shape, in px.

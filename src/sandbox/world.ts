@@ -23,6 +23,8 @@ import {
   gravityY,
   DEG,
   RAD,
+  matterAngVelToRads,
+  radsToMatterAngVel,
 } from '../sim/units.ts'
 import { DEFAULT_ARENA, isStaticKind, type Entity, type SandboxScene } from './types.ts'
 import { containBody, clampBodyCentre, type PxBox } from '../sim/contain.ts'
@@ -42,6 +44,8 @@ export interface SandboxBodyState {
   speed_ms: number
   angle_deg: number
   mass_kg: number
+  angular_velocity_rads: number
+  inertia_kgm2: number
   charge_c: number
   kinetic_j: number
   potential_j: number
@@ -583,18 +587,23 @@ export class SandboxWorld {
   /** Put a body back to a recorded state, for timeline scrubbing. */
   applyBodyState(
     id: string,
-    f: { x_m: number; y_m: number; angle_deg: number; vx_ms: number; vy_ms: number },
+    f: { x_m: number; y_m: number; angle_deg: number; vx_ms: number; vy_ms: number; omega_rads?: number },
   ): void {
     const b = this.built.find((x) => x.entity.id === id)
     if (!b?.main || b.main.isStatic) return
     Body.setPosition(b.main, { x: mToPx(f.x_m), y: -mToPx(f.y_m) })
     Body.setAngle(b.main, f.angle_deg * DEG)
     Body.setVelocity(b.main, { x: msToMatterVel(f.vx_ms), y: -msToMatterVel(f.vy_ms) })
+    Body.setAngularVelocity(b.main, radsToMatterAngVel(f.omega_rads ?? 0))
     this.accumulatorMs = 0
     this.accelerationById.delete(id)
     // A pendulum carries its own angle and rate; re-derive them or resuming
     // from a scrubbed frame would snap the bob back.
-    if (b.entity.kind === 'pendulum' && b.anchor) {
+    this.resyncPendulum(b)
+  }
+
+  private resyncPendulum(b: Built): void {
+    if (b.entity.kind === 'pendulum' && b.anchor && b.main) {
       const dx = b.main.position.x - b.anchor.position.x
       const dy = b.main.position.y - b.anchor.position.y
       b.theta = Math.atan2(dx, dy)
@@ -691,6 +700,7 @@ export class SandboxWorld {
     const body = this.bodyById(id)
     if (!body || body.isStatic) return
     Body.setVelocity(body, { x: msToMatterVel(v[0]), y: -msToMatterVel(v[1]) })
+    this.resyncPendulum(this.built.find(b => b.main === body)!)
   }
 
   setPositionM(id: string, p: [number, number]): void {
@@ -699,6 +709,12 @@ export class SandboxWorld {
     // A grab is a teleport; clamp it so a hand cannot carry a body through a wall.
     const [x, y] = clampBodyCentre(body, mToPx(p[0]), -mToPx(p[1]), this.containBox())
     Body.setPosition(body, { x, y })
+    const b = this.built.find(b => b.main === body)!
+    if (b.entity.kind === 'pendulum' && b.anchor) {
+      const theta = Math.atan2(x - b.anchor.position.x, y - b.anchor.position.y)
+      Body.setPosition(body, { x: b.anchor.position.x + mToPx(b.entity.length_m) * Math.sin(theta), y: b.anchor.position.y + mToPx(b.entity.length_m) * Math.cos(theta) })
+    }
+    this.resyncPendulum(b)
   }
 
   /** Metric state of every movable component. */
@@ -712,6 +728,8 @@ export class SandboxWorld {
       const vy = -matterVelToMs(b.main.velocity.y)
       const speed = Math.hypot(vx, vy)
       const m = b.main.mass
+      const inertia = Number.isFinite(b.main.inertia) ? b.main.inertia / PX_PER_M ** 2 : 0
+      const omega = matterAngVelToRads(b.main.angularVelocity)
       out.push({
         id: e.id,
         kind: e.kind,
@@ -720,8 +738,10 @@ export class SandboxWorld {
         speed_ms: speed,
         angle_deg: b.main.angle * RAD,
         mass_kg: m,
+        inertia_kgm2: inertia,
+        angular_velocity_rads: omega,
         charge_c: 'charge_c' in e ? e.charge_c : 0,
-        kinetic_j: 0.5 * m * speed * speed,
+        kinetic_j: 0.5 * m * speed * speed + 0.5 * inertia * omega * omega,
         potential_j: m * this.scene.gravity_ms2 * y,
       })
     }

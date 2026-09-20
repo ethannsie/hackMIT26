@@ -217,7 +217,7 @@ console.log('\nENERGY  a scene with nothing dissipative must conserve it')
 
   const laws = tracker.sample(w).laws
   const energyLaw = laws.find((l) => l.name === 'Total energy')!
-  ok('scene is correctly reported as energy-conserving', energyLaw.expected === true)
+  ok('inelastic bob contacts are disclosed even when separated bodies conserve energy', !energyLaw.expected && energyLaw.reasons.some(r => r.includes('inelastic')))
 }
 
 // ---------------------------------------------------------------------------

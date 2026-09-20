@@ -23,6 +23,7 @@ console.log(`image: ${path}  (${Math.round(bytes.length / 1024)} KB)`)
 
 const res = await fetch('http://localhost:8787/api/extract', {
   method: 'POST',
+  signal: AbortSignal.timeout(180_000),
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ image: dataUrl }),
 })
@@ -58,8 +59,9 @@ if (body.spec.problem_type === 'inclined_plane') {
   const v1 = world.state().bodies['block']!.speed_ms
   const a = (v1 - v0) / (world.time_s - t0)
   const expected = world.state().solutions.find((s) => s.quantity === 'acceleration_ms2')!.value
-  const err = Math.abs((a - expected) / expected) * 100
+  const err = Math.abs(a - expected) / Math.max(Math.abs(expected), 1e-6) * 100
   console.log(`  acceleration  sim=${a.toFixed(4)}  analytic=${expected.toFixed(4)}  err=${err.toFixed(2)}%`)
+  if (err >= 1 || !Number.isFinite(err)) process.exitCode = 1
   console.log(err < 1 ? '\nPipeline verified: photo -> spec -> sim agrees with the derivation.' : '\nMISMATCH between sim and derivation.')
 } else {
   world.stepMany(240)

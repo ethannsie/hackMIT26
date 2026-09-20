@@ -294,7 +294,11 @@ def draw_virtual_hand(frame: np.ndarray, landmarks) -> None:
 def bridge_frame(hand: HandInteraction, width: int, height: int, landmarks) -> Optional[dict[str, object]]:
     if not hand.hand_visible:
         return None
+    from panel.camera import fist_score
+    points = np.array([(lm.x * width, lm.y * height, lm.z * width) for lm in landmarks]) if landmarks else np.zeros((21, 3))
+    fist = fist_score(points) if landmarks else 0.0
     return {
+        "fist": fist,
         "t_ms": time.monotonic() * 1000,
         "handedness": "right",
         "confidence": 1.0,
@@ -310,7 +314,7 @@ def bridge_frame(hand: HandInteraction, width: int, height: int, landmarks) -> O
             "y": float(hand.palm_velocity[1] / height),
             "z": 0.0,
         },
-        "pinch": 1.0 if hand.is_pinching else 0.0,
+        "pinch": 1.0 if hand.is_pinching and fist < 0.7 else 0.0,
         "landmarks": [
             {"x": float(landmark.x), "y": float(landmark.y), "z": float(landmark.z)}
             for landmark in (landmarks or [])

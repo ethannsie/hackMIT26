@@ -75,11 +75,21 @@ export class MockHandSource implements HandSource {
 
   private onDown = (): void => {
     this.pushing = true
+    this.syncButtons()
   }
   private onUp = (): void => {
     this.pushing = false
+    this.syncButtons()
+  }
+  private syncButtons(): void {
+    if (!this.frame) return
+    this.frame.fist = this.pushing ? 1 : 0
+    this.frame.pinch = this.pinching ? 1 : 0
+    this.frame.palm_m.z = this.pushing ? -this.opts.pushDepth_m : 0.05
   }
   private onLeave = (): void => {
+    this.pushing = false
+    this.pinching = false
     this.frame = null
     this.last = null
   }
@@ -95,6 +105,7 @@ export class MockHandSource implements HandSource {
     el.addEventListener('mousedown', this.onDown)
     el.addEventListener('mouseleave', this.onLeave)
     window.addEventListener('mouseup', this.onUp)
+    window.addEventListener('blur', this.onLeave)
     window.addEventListener('keydown', this.onKey)
     window.addEventListener('keyup', this.onKey)
   }
@@ -105,12 +116,14 @@ export class MockHandSource implements HandSource {
     el.removeEventListener('mousedown', this.onDown)
     el.removeEventListener('mouseleave', this.onLeave)
     window.removeEventListener('mouseup', this.onUp)
+    window.removeEventListener('blur', this.onLeave)
     window.removeEventListener('keydown', this.onKey)
     window.removeEventListener('keyup', this.onKey)
-    this.frame = null
+    this.onLeave()
   }
 
   current(): HandFrame | null {
+    if (this.frame && this.last && performance.now() - this.last.t > 80) this.frame.palm_velocity_ms = { x: 0, y: 0, z: 0 }
     return this.frame
   }
 }

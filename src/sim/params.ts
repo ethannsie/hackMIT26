@@ -23,6 +23,7 @@ export interface InclineParams {
   ramp_length_m: number
   v0_ms: number
   motion: 'sliding' | 'rolling'
+  shape: MassShape
   g: number
 }
 
@@ -139,6 +140,7 @@ export function toParams(spec: ProblemSpec): SimParams {
         ramp_length_m: or(g.ramp_length_m, 1.2),
         v0_ms: or(g.initial_velocity_ms, 0),
         motion: g.body_motion ?? 'sliding',
+        shape: g.body_shape ?? 'sphere',
         g: gravity,
       }
 

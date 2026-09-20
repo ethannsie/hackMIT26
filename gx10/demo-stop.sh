@@ -6,21 +6,16 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN="$REPO/.demo"
 
-stopped=0
+mkdir -p "$RUN"
+exec 9>"$RUN/demo.lock"
+flock -n 9 || { echo "Demo is starting; retry Stop after startup completes"; exit 1; }
+PY="$REPO/.venv/bin/python"; [[ -x "$PY" ]] || PY=python3
 for name in hackmit-app hackmit-panel web api panel; do
-  f="$RUN/$name.pid"
+  f="$RUN/$name.owner.json"
   [[ -f "$f" ]] || continue
-  pid=$(cat "$f")
-  # demo.sh started each one with setsid, so pid == process group.
-  if kill -- "-$pid" 2>/dev/null; then echo "stopped $name ($pid)"; stopped=$((stopped + 1)); fi
-  rm -f "$f"
+  "$PY" "$REPO/gx10/process_owner.py" stop "$f"
 done
-
-# Anything started by hand that holds the same ports or profiles.
-pkill -f -- "--user-data-dir=$RUN/profile-hackmit-" 2>/dev/null && echo "closed stray browser windows"
-pkill -f "panel/panel_server.py" 2>/dev/null && echo "stopped stray panel"
-pkill -f "server/index.ts" 2>/dev/null && echo "stopped stray api"
-pkill -f "vite --port 5173" 2>/dev/null && echo "stopped stray web"
-
-echo "== demo stopped $(date '+%F %T') ($stopped tracked) ==" | tee -a "$RUN/demo.log"
+# Legacy .pid files and manually started services are intentionally not killed:
+# a PID alone cannot prove ownership after reboot or PID reuse.
+echo "== owned demo processes stopped $(date '+%F %T') ==" | tee -a "$RUN/demo.log"
 notify-send -a "HackMIT demo" "Demo stopped" 2>/dev/null || true

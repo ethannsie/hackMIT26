@@ -1,3 +1,4 @@
+import { request } from '../../net/request.ts'
 import { RopeGame } from './game.ts'
 
 /** Only integration surface: the host skips its loop while active.
@@ -38,7 +39,7 @@ export class RopeMinigame {
   private close(): void { this.game?.dispose(); this.game = null }
   private async setView(view: string): Promise<void> {
     try {
-      await fetch(`${this.base}/api/view`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ view }) })
+      await request(`${this.base}/api/view`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ view }) })
     } catch { /* Standalone preview also works without a running panel. */ }
   }
 }

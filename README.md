@@ -31,19 +31,21 @@ problems, and the GX10 hosting its own Wi-Fi so the ring light needs no phone.
 ## Run it
 
 ```bash
-npm install
+npm ci                    # Node 20.19+ or 22.12+
 cp .env.example .env      # GX10 local Ollama settings; see gx10/README.md
 npm run dev               # web app on :5173, extract API on :8787
 ```
 
-Two other commands matter:
+Validation commands:
 
 ```bash
 npm run verify            # problem library, against the closed forms
 npm run verify:sandbox    # sandbox, against the conservation laws
-npm run verify:all        # both
+npm run verify:all        # build + all physics, input, API, panel and launcher checks
 npm run check             # typecheck
 ```
+
+For the camera-free Python checks, run `python3 -m pip install -r requirements-test.txt` in a virtual environment (the aggregate gate automatically uses `.venv/bin/python` when present). CI runs the same gate on every PR.
 
 Open `#sandbox` in the URL to go straight into sandbox mode. Press `?` in the
 app for keyboard shortcuts.
@@ -64,8 +66,7 @@ Two more things the local models do, both text-only and both on the box:
   has `nemotron-3.5-lightning` write a fresh problem of the selected type
   *and* fill the same ProblemSpec schema the photo path uses, in one
   structured reply. It lands through the same validator, builders and
-  derivation as a scan. 5–6 s measured. A consistency check rejects a draft
-  whose numbers do not appear in its own statement and asks for another.
+  derivation as a scan. 5–6 s measured before this change. The displayed statement is now rendered from the validated quantities, so signs, shapes and units agree with the simulation. Low-confidence or repaired drafts require confirmation before replacing the scene.
 - **Ask about the physics** — a box under the derivation. Type a question
   (or `A`), or press `🎤` / `M` to talk: press once to start listening, again
   to stop (20 s ceiling). The panel's *Ask a question* tile opens an Ask view
@@ -79,7 +80,7 @@ Two more things the local models do, both text-only and both on the box:
   Vol. 1* as context (`corpus/README.md` — built on the box, not committed,
   CC BY-NC-SA). ~1.5–2 s per answer. Voice is **online-only by design**:
   the API probes Deepgram every 30 s and the mic button is disabled whenever
-  the box cannot reach it (or has no key), so the typed box is what works
+  the box cannot authenticate with it (or has no key), so the typed box is what works
   offline. Without the corpus the model answers from memory. Measured:
   a spoken sentence transcribed word-for-word in 0.8 s with `nova-3`.
 
@@ -262,3 +263,11 @@ without it the browser keeps the mouse, and `?hand=mouse` ignores every
 tracker. It holds a grab through a 0.22 s tracker
 dropout and needs six open frames to release — constants at the top of the
 file. `depth_at_cursor_mm()` is an empty adapter left for a depth sensor.
+
+
+Audit fixes and validation are tracked in [docs/audit-fixes.md](docs/audit-fixes.md).
+Extraction rejects missing essential givens and unsupported numerical ranges;
+conventional defaults are shown for confirmation. The original statement is retained
+beside the current simulation givens, which are also sent to the tutor. The finite
+ramp currently supports downhill initial motion only. Uphill launches are rejected
+with an explanation; free compositions remain available in Sandbox.

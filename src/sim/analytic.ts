@@ -34,7 +34,8 @@ const DEG = Math.PI / 180
 
 /** Round for display without pretending to more precision than we have. */
 function n(x: number, places = 3): string {
-  if (!Number.isFinite(x)) return '\\infty'
+  if (Number.isNaN(x)) return '\\text{undefined}'
+  if (!Number.isFinite(x)) return x < 0 ? '-\\infty' : '\\infty'
   const r = Number(x.toFixed(places))
   return String(r)
 }
@@ -48,7 +49,8 @@ function projectile(p: Extract<SimParams, { kind: 'projectile' }>): Solution[] {
   const disc = vy * vy + 2 * g * h0
   const tf = (vy + Math.sqrt(disc)) / g
   const range = vx * tf
-  const apex = h0 + (vy * vy) / (2 * g)
+  const riseVy = Math.max(0, vy)
+  const apex = h0 + (riseVy * riseVy) / (2 * g)
 
   return [
     {
@@ -81,9 +83,9 @@ function projectile(p: Extract<SimParams, { kind: 'projectile' }>): Solution[] {
       unit: 'm',
       steps: [
         {
-          label: 'Apex is where vertical velocity reaches zero',
-          latex: 'h = h_0 + \\frac{v_0^2\\sin^2\\theta}{2g}',
-          substituted: `h = ${n(h0)} + \\frac{${n(vy * vy)}}{2(${n(g)})} = ${n(apex)}\\ \\text{m}`,
+          label: vy > 0 ? 'Apex is where vertical velocity reaches zero' : 'Launched downward: the highest point is the starting point',
+          latex: 'h = h_0 + \\frac{\\max(0,v_0\\sin\\theta)^2}{2g}',
+          substituted: `h = ${n(h0)} + \\frac{${n(riseVy * riseVy)}}{2(${n(g)})} = ${n(apex)}\\ \\text{m}`,
         },
       ],
     },
@@ -96,7 +98,9 @@ function incline(p: Extract<SimParams, { kind: 'inclined_plane' }>): Solution[] 
   const sin = Math.sin(th)
   const cos = Math.cos(th)
 
-  const a = motion === 'rolling' ? (5 / 7) * g * sin : g * (sin - mu * cos)
+  const k = INERTIA_COEFF[p.shape]
+  const held = motion === 'sliding' && v0 === 0 && sin <= mu * cos
+  const a = held ? 0 : motion === 'rolling' ? g * sin / (1 + k) : g * (sin - mu * cos)
   const N = m * g * cos
 
   // L = v0·t + ½at²  solved for positive t.
@@ -111,14 +115,14 @@ function incline(p: Extract<SimParams, { kind: 'inclined_plane' }>): Solution[] 
 
   const accelStep: DerivationStep = motion === 'rolling'
     ? {
-        label: 'Rolling without slipping — 5/7 of the sliding value, because energy also goes into rotation',
-        latex: 'a = \\tfrac{5}{7} g\\sin\\theta',
-        substituted: `a = \\tfrac{5}{7}(${n(g)})\\sin ${n(angle_deg)}^\\circ = ${n(a)}\\ \\text{m/s}^2`,
+        label: `Rolling ${p.shape}: I = ${n(k)}mr²; energy goes into translation and rotation`,
+        latex: 'a = \\frac{g\\sin\\theta}{1+k}',
+        substituted: `a = \\frac{${n(g)}\\sin ${n(angle_deg)}^\\circ}{1+${n(k)}} = ${n(a)}\\ \\text{m/s}^2`,
       }
     : {
-        label: 'Newton\'s second law along the ramp, friction opposing motion',
-        latex: 'a = g(\\sin\\theta - \\mu\\cos\\theta)',
-        substituted: `a = ${n(g)}(\\sin ${n(angle_deg)}^\\circ - ${n(mu)}\\cos ${n(angle_deg)}^\\circ) = ${n(a)}\\ \\text{m/s}^2`,
+        label: held ? 'Static friction balances the downhill weight; the block stays at rest' : 'Newton\'s second law along the ramp, friction opposing motion',
+        latex: held ? 'a=0' : 'a = g(\\sin\\theta - \\mu\\cos\\theta)',
+        substituted: held ? 'a=0\\ \\text{m/s}^2' : `a = ${n(g)}(\\sin ${n(angle_deg)}^\\circ - ${n(mu)}\\cos ${n(angle_deg)}^\\circ) = ${n(a)}\\ \\text{m/s}^2`,
       }
 
   const out: Solution[] = [
@@ -149,9 +153,9 @@ function incline(p: Extract<SimParams, { kind: 'inclined_plane' }>): Solution[] 
       unit: 's',
       steps: [
         {
-          label: 'Constant acceleration over the ramp length',
+          label: Number.isFinite(t) ? 'Constant acceleration over the ramp length' : 'The body stops before the bottom or remains at rest',
           latex: 'L = v_0 t + \\tfrac{1}{2}at^2 \\;\\Rightarrow\\; t = \\frac{-v_0 + \\sqrt{v_0^2 + 2aL}}{a}',
-          substituted: `t = \\frac{-${n(v0)} + \\sqrt{${n(v0 * v0)} + 2(${n(a)})(${n(L)})}}{${n(a)}} = ${n(t)}\\ \\text{s}`,
+          substituted: !Number.isFinite(t) ? '\\text{Bottom is never reached}' : Math.abs(a) < 1e-9 ? `t=L/v_0=${n(t)}\\ \\text{s}` : `t = \\frac{-${n(v0)} + \\sqrt{${n(v0 * v0)} + 2(${n(a)})(${n(L)})}}{${n(a)}} = ${n(t)}\\ \\text{s}`,
         },
       ],
     },
@@ -161,9 +165,9 @@ function incline(p: Extract<SimParams, { kind: 'inclined_plane' }>): Solution[] 
       unit: 'm/s',
       steps: [
         {
-          label: 'Kinematics with no time term',
+          label: Number.isFinite(t) ? 'Kinematics with no time term' : 'Final speed at rest; the bottom is never reached',
           latex: 'v_f = \\sqrt{v_0^2 + 2aL}',
-          substituted: `v_f = \\sqrt{${n(v0 * v0)} + 2(${n(a)})(${n(L)})} = ${n(vf)}\\ \\text{m/s}`,
+          substituted: !Number.isFinite(t) ? 'v_{\\mathrm{stop}}=0' : `v_f = \\sqrt{${n(v0 * v0)} + 2(${n(a)})(${n(L)})} = ${n(vf)}\\ \\text{m/s}`,
         },
       ],
     },
@@ -174,11 +178,14 @@ function incline(p: Extract<SimParams, { kind: 'inclined_plane' }>): Solution[] 
 function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): Solution[] {
   const { length_m: L, theta0_deg, mass_kg: m, g } = p
   const th0 = theta0_deg * DEG
-  const omega = Math.sqrt(g / L)
-  const T = 2 * Math.PI * Math.sqrt(L / g)
+  // K(k) = pi/(2 AGM(1, sqrt(1-k²))). Converges quadratically.
+  let a = 1, b = Math.cos(th0 / 2)
+  for (let i = 0; i < 12; i++) [a, b] = [(a + b) / 2, Math.sqrt(a * b)]
+  const T = 2 * Math.PI * Math.sqrt(L / g) / a
+  const omega = 2 * Math.PI / T
 
   // Small-angle prediction vs the exact energy result. The gap IS the lesson.
-  const vMaxSmall = omega * L * Math.abs(th0)
+  const vMaxSmall = Math.sqrt(g / L) * L * Math.abs(th0)
   const vMaxExact = Math.sqrt(2 * g * L * (1 - Math.cos(th0)))
   const tMax = m * g * (3 - 2 * Math.cos(th0))
   const errPct = vMaxExact === 0 ? 0 : ((vMaxSmall - vMaxExact) / vMaxExact) * 100
@@ -190,9 +197,9 @@ function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): Solution[] {
       unit: 'rad/s',
       steps: [
         {
-          label: 'Small-angle approximation: sin θ ≈ θ makes this simple harmonic',
-          latex: '\\omega = \\sqrt{g/L}',
-          substituted: `\\omega = \\sqrt{${n(g)}/${n(L)}} = ${n(omega)}\\ \\text{rad/s}`,
+          label: 'Angular frequency from the amplitude-dependent period',
+          latex: '\\omega = 2\\pi/T',
+          substituted: `\\omega = 2\\pi/${n(T)} = ${n(omega)}\\ \\text{rad/s}`,
         },
       ],
     },
@@ -202,9 +209,9 @@ function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): Solution[] {
       unit: 's',
       steps: [
         {
-          label: 'Period is independent of both mass and amplitude — at small angles',
-          latex: 'T = 2\\pi\\sqrt{L/g}',
-          substituted: `T = 2\\pi\\sqrt{${n(L)}/${n(g)}} = ${n(T)}\\ \\text{s}\\quad (m = ${n(m)}\\ \\text{kg does not appear})`,
+          label: 'Exact finite-amplitude period; K is the complete elliptic integral',
+          latex: 'T = 4\\sqrt{L/g}\\,K(\\sin(|\\theta_0|/2))',
+          substituted: `T = 4\\sqrt{${n(L)}/${n(g)}}\\,K(${n(Math.sin(Math.abs(th0) / 2))}) = ${n(T)}\\ \\text{s}\\quad (m = ${n(m)}\\ \\text{kg does not appear})`,
         },
       ],
     },
@@ -221,7 +228,7 @@ function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): Solution[] {
         {
           label: 'What the small-angle formula would have predicted',
           latex: 'v_{max} \\approx \\omega L \\theta_0',
-          substituted: `v_{max} \\approx (${n(omega)})(${n(L)})(${n(th0)}) = ${n(vMaxSmall)}\\ \\text{m/s}`,
+          substituted: `v_{max} \\approx (${n(Math.sqrt(g / L))})(${n(L)})(${n(Math.abs(th0))}) = ${n(vMaxSmall)}\\ \\text{m/s}`,
         },
       ],
       ...(Math.abs(theta0_deg) > 20
@@ -305,14 +312,10 @@ function collision(p: Extract<SimParams, { kind: 'collision_1d' }>): Solution[] 
 // ---------------------------------------------------------------------------
 
 function rolling(p: Extract<SimParams, { kind: 'rolling_without_slipping' }>): Solution[] {
-  const { radius_m: r, mass_kg: m, v_ms: v, shape } = p
+  const { radius_m: r, v_ms: v, shape } = p
   const k = INERTIA_COEFF[shape]
   const omega = v / r
-  const I = k * m * r * r
-
-  const keTrans = 0.5 * m * v * v
-  const keRot = 0.5 * I * omega * omega
-  const fraction = keRot / (keTrans + keRot) // = k / (1 + k)
+  const fraction = k / (1 + k) // continuous shape ratio, also defined at rest
 
   return [
     {
@@ -365,7 +368,7 @@ function rolling(p: Extract<SimParams, { kind: 'rolling_without_slipping' }>): S
           substituted: `= \\frac{${n(k)}}{1 + ${n(k)}} = ${n(fraction)}`,
         },
       ],
-      caveat: `${n(fraction * 100, 1)}% of this body's kinetic energy is rotation, not motion down the track. Change the shape and this fraction changes — which is the whole reason a hoop loses a race to a disc, and a disc to a sphere.`,
+      caveat: v === 0 ? 'At rest both kinetic energies are zero. This is the limiting shape ratio for non-zero rolling speed.' : `${n(fraction * 100, 1)}% of this body's kinetic energy is rotation, not motion down the track. Change the shape and this fraction changes — which is the whole reason a hoop loses a race to a disc, and a disc to a sphere.`,
     },
   ]
 }

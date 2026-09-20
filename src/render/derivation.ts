@@ -21,12 +21,15 @@ export function renderDerivation(
   solutions: Solution[],
   rawText: string,
   repairs: string[] = [],
+  givens = '',
 ): void {
   const parts: string[] = []
 
   if (rawText) {
-    parts.push(`<blockquote class="problem">${escapeHtml(rawText)}</blockquote>`)
+    parts.push(`<blockquote class="problem"><strong>Original problem</strong><br>${escapeHtml(rawText)}</blockquote>`)
   }
+
+  if (givens) parts.push(`<p class="current-givens"><strong>Current simulation givens</strong><br>${escapeHtml(givens)}</p>`)
 
   for (const s of solutions) {
     parts.push(`<section class="solution">
@@ -103,7 +106,8 @@ function prettyQuantity(q: string): string {
 }
 
 function format(v: number): string {
-  if (!Number.isFinite(v)) return '∞'
+  if (Number.isNaN(v)) return 'undefined'
+  if (!Number.isFinite(v)) return v < 0 ? '−∞' : '∞'
   if (Math.abs(v) >= 1000 || (Math.abs(v) < 0.01 && v !== 0)) return v.toExponential(2)
   return String(Number(v.toFixed(3)))
 }

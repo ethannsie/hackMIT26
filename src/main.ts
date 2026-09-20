@@ -8,6 +8,9 @@
  */
 import 'katex/dist/katex.min.css'
 import { RopeMinigame } from './minigames/rope/integration.ts'
+import { LatestRequest } from './net/latest.ts'
+import { currentGivens } from './spec/describe.ts'
+import { validateSpec } from './spec/validate.ts'
 import { SimWorld } from './sim/world.ts'
 import { CanvasView } from './render/canvas.ts'
 import { renderDerivation } from './render/derivation.ts'
@@ -29,7 +32,7 @@ import type { DrawOptions } from './render/canvas.ts'
 import type { Sample } from './render/charts.ts'
 import type { SandboxScene } from './sandbox/types.ts'
 import type { HandFrame } from './hand/types.ts'
-import { CONFIDENCE_FLOOR, PROBLEM_TYPES, type ProblemSpec, type ProblemType } from './spec/types.ts'
+import { PROBLEM_TYPES, type ProblemSpec, type ProblemType } from './spec/types.ts'
 
 const $ = <T extends HTMLElement>(sel: string): T => {
   const el = document.querySelector<T>(sel)
@@ -67,6 +70,45 @@ const historyEl = $<HTMLSelectElement>('#history')
 function setStatus(text: string, tone: 'ok' | 'warn' | 'error' = 'ok'): void {
   statusEl.textContent = text
   statusEl.dataset['tone'] = tone
+}
+
+const problemRequest = new LatestRequest()
+const confirmation = document.createElement('section')
+confirmation.className = 'scan-confirmation'
+confirmation.hidden = true
+confirmation.setAttribute('role', 'dialog')
+confirmation.setAttribute('aria-label', 'Review extracted problem')
+document.body.append(confirmation)
+function invalidateProblemRequest(): void {
+  problemRequest.cancel()
+  confirmation.hidden = true
+  generateBtn.disabled = false
+}
+
+function acceptProblem(next: ProblemSpec, nextRepairs: string[], review: boolean, current: () => boolean): void {
+  const apply = (): void => {
+    if (!current()) return
+    remember('before importing problem')
+    if (mode !== 'problem') setMode('problem')
+    load(next, nextRepairs)
+    setStatus(`loaded ${next.problem_type.replace(/_/g, ' ')}`)
+  }
+  if (!review) { apply(); return }
+  confirmation.replaceChildren()
+  const title = document.createElement('h3')
+  title.textContent = `Review ${next.problem_type.replace(/_/g, ' ')} · confidence ${next.confidence.toFixed(2)}`
+  const details = document.createElement('p')
+  details.textContent = [next.raw_text, currentGivens(next), ...nextRepairs].join('\n\n')
+  const accept = document.createElement('button')
+  accept.textContent = 'Confirm and load'
+  accept.onclick = apply
+  const cancel = document.createElement('button')
+  cancel.textContent = 'Keep current scene'
+  cancel.onclick = () => { invalidateProblemRequest(); setStatus('import cancelled') }
+  confirmation.append(title, details, accept, cancel)
+  confirmation.hidden = false
+  setStatus('Review the extracted type and givens before loading.', 'warn')
+  accept.focus()
 }
 
 const view = new CanvasView(canvas)
@@ -123,6 +165,7 @@ let showForces = true
 
 /** Capture the state as it is right now, before something destroys it. */
 function remember(label: string): void {
+  invalidateProblemRequest()
   const samples = recorder.snapshot()
   const tracked = recorder.tracked
   const bodies = captureBodies()
@@ -135,6 +178,8 @@ function remember(label: string): void {
 }
 
 function restore(snap: Snap): void {
+  invalidateProblemRequest()
+  lastCoupling = coupling.reset()
   timeline.clear()
   if (snap.kind === 'sandbox') {
     if (mode !== 'sandbox') setMode('sandbox')
@@ -225,10 +270,10 @@ function handFrame(): HandFrame | null {
  * their own copy of the ladder.
  */
 const panelLink = new PanelLink({
+  onScanPending: () => { invalidateProblemRequest(); return problemRequest.begin().current },
   onScan: (image, file) => {
     // A scan is a problem, so leave sandbox for it. Otherwise the spec loads
     // into a world the sandbox view is not drawing and the scan looks ignored.
-    if (mode !== 'problem') setMode('problem')
     void ingestImage(image, `panel scan ${file}`)
   },
   onLink: (up) => {
@@ -289,6 +334,8 @@ function streamSimToPanel(): void {
 // --- problem mode ----------------------------------------------------------
 
 function load(next: ProblemSpec, nextRepairs: string[] = []): void {
+  invalidateProblemRequest()
+  lastCoupling = coupling.reset()
   world.dispose()
   spec = next
   repairs = nextRepairs
@@ -303,7 +350,7 @@ function load(next: ProblemSpec, nextRepairs: string[] = []): void {
 }
 
 function refreshDerivation(): void {
-  renderDerivation(panel, world.state().solutions, spec.raw_text, repairs)
+  renderDerivation(panel, world.state().solutions, spec.raw_text, repairs, currentGivens(spec))
 }
 
 function buildKnobs(): void {
@@ -332,8 +379,11 @@ function buildKnobs(): void {
       // Rebuild rather than mutate: the sim is a pure function of the spec, and
       // keeping it that way is what makes a run reproducible.
       const edited: ProblemSpec = { ...spec, given: { ...spec.given, [knob.key]: v } }
+      const checked = validateSpec(edited)
+      if (!checked.ok || !checked.spec) { setStatus(checked.errors.join('; '), 'error'); input.value = String(spec.given[knob.key]); return }
+      lastCoupling = coupling.reset()
       world.dispose()
-      spec = edited
+      spec = checked.spec
       world = new SimWorld(spec)
       recorder.clear(null)
       timeline.clear()
@@ -355,6 +405,7 @@ function setRunning(next: boolean): void {
     timeline.commitToCursor()
     setStatus('resumed from the scrubbed frame — later history discarded')
   }
+  if (!next) lastCoupling = coupling.reset()
   running = next
   playBtn.textContent = running ? '❚❚' : '▶'
   playBtn.title = running ? 'Pause (Space)' : 'Play (Space)'
@@ -363,20 +414,23 @@ function setRunning(next: boolean): void {
 }
 
 function stepOnce(): void {
+  timeline.commitToCursor()
+  lastCoupling = coupling.reset()
   if (mode === 'sandbox') {
     sandbox.stepOnce()
-    recordFrame()
+    recordFrame(true)
     sampleMotion()
   }
   else {
-    world.step(lastCoupling.force ? [lastCoupling.force] : [])
-    recordFrame()
+    world.step()
+    recordFrame(true)
     sampleMotion()
   }
 }
 
 function resetAll(): void {
   remember('before reset')
+  lastCoupling = coupling.reset()
   if (mode === 'sandbox') {
     sandbox.reset()
     timeline.clear()
@@ -400,6 +454,8 @@ function setGraphs(next: boolean): void {
 }
 
 function setMode(next: Mode): void {
+  invalidateProblemRequest()
+  lastCoupling = coupling.reset()
   mode = next
   modeEl.value = next
   const inSandbox = mode === 'sandbox'
@@ -440,7 +496,7 @@ function captureBodies(): Record<string, BodyFrame> {
     for (const b of sandbox.bodyStates()) {
       bodies[b.id] = {
         x_m: b.position_m[0], y_m: b.position_m[1], angle_deg: b.angle_deg,
-        vx_ms: b.velocity_ms[0], vy_ms: b.velocity_ms[1], omega_rads: 0,
+        vx_ms: b.velocity_ms[0], vy_ms: b.velocity_ms[1], omega_rads: b.angular_velocity_rads,
       }
     }
     return bodies
@@ -456,10 +512,10 @@ function captureBodies(): Record<string, BodyFrame> {
 }
 
 /** Snapshot every body this step, for scrubbing and path tracing. */
-function recordFrame(): void {
+function recordFrame(force = false): void {
   const bodies = captureBodies()
-  if (mode === 'sandbox') timeline.record(sandbox.steps, sandbox.simTime, bodies)
-  else timeline.record(world.steps, world.time_s, bodies)
+  if (mode === 'sandbox') timeline.record(sandbox.steps, sandbox.simTime, bodies, force)
+  else timeline.record(world.steps, world.time_s, bodies, force)
 }
 
 /** Put the live bodies where a recorded frame says they were. */
@@ -618,9 +674,12 @@ helpEl.addEventListener('click', (e) => {
  * report are handled. `origin` is only for the status line.
  */
 async function ingestImage(file: Blob, origin: string): Promise<void> {
+  invalidateProblemRequest()
+  const request = problemRequest.begin()
   setStatus(`${origin}: compressing and extracting…`, 'warn')
   try {
-    const result = await extractFromImage(file)
+    const result = await extractFromImage(file, request.signal)
+    if (!request.current()) return
     const kb = (n: number): string => `${Math.round(n / 1024)} KB`
     const shrink = `${kb(result.image.originalBytes)} → ${kb(result.image.bytes)}`
 
@@ -628,20 +687,11 @@ async function ingestImage(file: Blob, origin: string): Promise<void> {
       setStatus(`extraction failed: ${result.errors.join('; ')} — pick a type manually`, 'error')
       return
     }
-    load(result.spec, result.repairs)
+    setStatus(`${shrink} · ${result.elapsed_ms} ms via ${result.source}`)
+    acceptProblem(result.spec, result.repairs, result.needsConfirmation, request.current)
 
-    if (result.needsConfirmation) {
-      setStatus(
-        `low confidence (${result.spec.confidence.toFixed(2)} < ${CONFIDENCE_FLOOR}) — confirm the type. ${shrink}, ${result.elapsed_ms} ms via ${result.source}`,
-        'warn',
-      )
-    } else {
-      setStatus(
-        `${result.spec.problem_type.replace(/_/g, ' ')} · confidence ${result.spec.confidence.toFixed(2)} · ${shrink} · ${result.elapsed_ms} ms via ${result.source}`,
-      )
-    }
   } catch (err) {
-    setStatus((err as Error).message, 'error')
+    if (request.current()) setStatus((err as Error).message, 'error')
   }
 }
 
@@ -650,25 +700,21 @@ async function ingestImage(file: Blob, origin: string): Promise<void> {
  * photo, so the derivation, the sliders and the timeline all reset the same
  * way; the status line says what the model chose to write about.
  */
-let generating = false
 async function generateNew(problemType?: string): Promise<void> {
-  if (generating) return
-  generating = true
+  invalidateProblemRequest()
+  const request = problemRequest.begin()
   generateBtn.disabled = true
   const type = (problemType ?? (mode === 'problem' ? typeEl.value : '')) || undefined
   setStatus(`writing a new ${type ? type.replace(/_/g, ' ') : ''} problem on the GX10…`, 'warn')
   try {
-    const result = await generateProblem(type)
+    const result = await generateProblem(type, request.signal)
+    if (!request.current()) return
     if (!result.ok || !result.spec) throw new Error(result.errors.join('; ') || 'model returned no problem')
-    if (mode !== 'problem') setMode('problem')
-    remember('before new problem')
-    load(result.spec, result.repairs)
-    setStatus(`new problem: ${result.setting} · ${(result.elapsed_ms / 1000).toFixed(1)} s on the GX10`)
+    acceptProblem(result.spec, result.repairs, result.needsConfirmation, request.current)
   } catch (err) {
-    setStatus(`could not generate: ${(err as Error).message}`, 'error')
+    if (request.current()) setStatus(`could not generate: ${(err as Error).message}`, 'error')
   } finally {
-    generating = false
-    generateBtn.disabled = false
+    if (request.current()) generateBtn.disabled = false
   }
 }
 generateBtn.addEventListener('click', () => void generateNew())
@@ -680,6 +726,7 @@ const askBox = new AskBox(
     mode === 'problem'
       ? {
           raw_text: spec.raw_text,
+          current_givens: currentGivens(spec),
           solutions: world.state().solutions.map((s) => `${s.quantity} = ${Number(s.value.toFixed(3))} ${s.unit}`),
         }
       : { raw_text: 'The visitor is composing their own scene in the sandbox: ramps, balls, springs, pendulums and magnetic fields.' },
@@ -721,6 +768,7 @@ function typingInAField(e: KeyboardEvent): boolean {
 }
 
 window.addEventListener('keydown', (e) => {
+  if (typingInAField(e)) return
   if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
     e.preventDefault()
     undoOnce()
@@ -881,11 +929,13 @@ function frame(nowMs: number): void {
 
     // Report once per set of escapees, not every frame — a status line that
     // is rewritten sixty times a second buries everything else it could say.
+    const limited = [...world.speedLimited].join(', ')
     const escaped = [...world.escaped].join(', ')
+    if (limited && reportedEscape !== `speed:${limited}`) setStatus(`${limited}: numerical speed limit reached (60 m/s); reset or reduce the input.`, 'warn')
     if (escaped && escaped !== reportedEscape) {
       setStatus(`${escaped} left the scene and was parked`, 'warn')
     }
-    reportedEscape = escaped
+    reportedEscape = limited ? `speed:${limited}` : escaped
   }
 
   refreshScrubber()

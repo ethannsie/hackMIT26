@@ -43,7 +43,7 @@ RULES
 
 11. Fields for the harder problem types:
    - radius_m: the radius of a rolling body, or the radius of a circular path.
-   - body_shape: "disc" (disc, cylinder, wheel), "sphere" (solid ball), "hoop" (ring, hoop, thin-walled cylinder), "point". This sets the moment of inertia, so get it right when the problem names a shape; null if it does not.
+   - body_shape: "disc" (disc, cylinder, wheel), "sphere" (solid ball), "hoop" (ring, hoop, thin-walled cylinder), "point". For a rolling incline as well as a rolling horizontal track, this sets the moment of inertia, so get it right when the problem names a shape; null if it does not.
    - charge_c and b_field_tesla: KEEP THE SIGNS. A negative charge, or a field into the page, reverses the orbit. Record a field directed out of the page as positive and into the page as negative. A field given in gauss converts to tesla (1 G = 1e-4 T).
    - omega_rads: angular velocity of a rotating frame, turntable, or merry-go-round. Positive is counter-clockwise. Convert rpm to rad/s.
    - impact_parameter_m: for angular momentum about a point, the PERPENDICULAR distance from the stated origin to the particle's line of motion. Not the distance to the particle, which changes as it moves.

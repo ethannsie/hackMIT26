@@ -1,3 +1,4 @@
+import { request } from '../net/request.ts'
 import type { HandFrame, HandSource } from './types.ts'
 
 interface RemoteHandFrame {
@@ -7,6 +8,7 @@ interface RemoteHandFrame {
   palm: { x: number; y: number; z: number }
   palm_velocity: { x: number; y: number; z: number }
   pinch: number
+  fist?: number
   landmarks?: { x: number; y: number; z: number }[]
 }
 
@@ -15,6 +17,8 @@ const BACKOFF_MS = 1000
 
 /** Receives the Python webcam tracker's latest frame through the local API. */
 export class HttpHandSource implements HandSource {
+  private controller: AbortController | null = null
+  private lastSourceStamp: number | null = null
   private frame: HandFrame | null = null
   private target: HandFrame | null = null
   private timer: number | null = null
@@ -37,13 +41,16 @@ export class HttpHandSource implements HandSource {
   ) {}
 
   async start(): Promise<void> {
-    await this.poll()
+    if (this.controller) return
+    this.controller = new AbortController()
     this.timer = window.setInterval(() => void this.poll(), 16)
   }
 
   stop(): void {
     if (this.timer !== null) window.clearInterval(this.timer)
     this.timer = null
+    this.controller?.abort()
+    this.controller = null
     this.frame = null
     this.target = null
   }
@@ -79,13 +86,16 @@ export class HttpHandSource implements HandSource {
     if (this.requestInFlight || this.yieldTo() || performance.now() < this.retryAt) return
     this.requestInFlight = true
     try {
-      const response = await fetch('/api/hand/frame', { cache: 'no-store' })
+      const response = await request('/api/hand/frame', { cache: 'no-store', signal: this.controller?.signal }, 1000)
       if (!response.ok) {
         this.retryAt = performance.now() + BACKOFF_MS
         return
       }
       const remote = (await response.json()) as RemoteHandFrame | null
-      if (!remote) return
+      if (!this.controller || this.controller.signal.aborted) return
+      if (!remote) { this.frame = null; this.target = null; this.lastSourceStamp = null; return }
+      if (remote.t_ms === this.lastSourceStamp) return
+      this.lastSourceStamp = remote.t_ms
       const rect = this.element.getBoundingClientRect()
       const [palmX, palmY] = this.toScene(
         rect.left + remote.palm.x * rect.width,
@@ -119,6 +129,7 @@ export class HttpHandSource implements HandSource {
           z: remote.palm_velocity.z,
         },
         pinch: remote.pinch,
+        fist: remote.fist ?? 0,
         palm_normal: { x: 0, y: 0, z: 1 },
         landmarks_m,
       }

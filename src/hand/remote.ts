@@ -67,6 +67,7 @@ export class RemoteHandSource implements HandSource {
   private stream: EventSource | null = null
   private frame: HandFrame | null = null
   /** Panel clock vs. this page's clock: the offset lets us age frames locally. */
+  private lastSourceStamp: number | null = null
   private receivedAt = 0
   private connected = false
   /** Previous canvas-mapped palm, for velocity in the view's own metres. */
@@ -153,9 +154,14 @@ export class RemoteHandSource implements HandSource {
       // keep pushing with a hand that is no longer being seen.
       this.connected = false
       this.frame = null
+      this.lastSourceStamp = null
+      this.lastPalm = null
     })
     stream.addEventListener('hand', (e) => {
-      const w = JSON.parse((e as MessageEvent).data) as WireFrame
+      const w = JSON.parse((e as MessageEvent).data) as WireFrame | null
+      if (!w) { this.frame = null; this.lastSourceStamp = null; this.lastPalm = null; return }
+      if (!Number.isFinite(w.t_ms) || w.t_ms === this.lastSourceStamp) return
+      this.lastSourceStamp = w.t_ms
       const now = performance.now()
       this.frame = this.fromWire(w, now)
       this.receivedAt = now
@@ -167,6 +173,7 @@ export class RemoteHandSource implements HandSource {
     this.stream?.close()
     this.stream = null
     this.frame = null
+    this.lastSourceStamp = null
     this.lastPalm = null
     this.connected = false
   }

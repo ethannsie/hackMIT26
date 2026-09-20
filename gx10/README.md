@@ -187,3 +187,28 @@ bridge forwards NDJSON lines to `new WebSocket('ws://localhost:8765')`.
 - **ARM64 + Blackwell (`sm_121`)**: anything past Ollama (vLLM, PyTorch) needs
   NVIDIA NGC containers `26.01+`.
 - Two `hostname -I` addresses are normal: the second (`172.17.0.1`) is Docker.
+
+
+### Audit hardening (September 2026)
+
+Use Node 20.19+ or 22.12+ (Node 22 LTS recommended). Re-run `gx10/install-demo.sh`
+after pulling dependency changes: it runs `npm ci` and reconciles Python requirements
+in `.venv`. Standalone `panel/setup.sh` uses the same environment.
+
+API and Ollama now bind loopback. For laptop inspection use an SSH tunnel, e.g.
+`ssh -L 11434:127.0.0.1:11434 asus@GX10_ADDRESS`; use localhost in the client.
+The default Mosquitto listener is loopback too. To restore the physical ESP32
+light, add a listener on the GX10's **specific private interface address** and
+restrict port 1883 at the firewall to the ESP32's fixed IP (or configure MQTT
+authentication on both the broker and firmware). Do not restore an unrestricted
+anonymous listener. Local simulation, scanning and the light publisher remain usable.
+
+`/api/health` is API liveness; `/api/ready` additionally requires the configured
+extraction and text models in Ollama's model inventory. The launcher verifies service
+identity and readiness before reporting success. Voice and textbook corpus availability
+are reported separately because typed questions and simulation can run without them.
+A hardware rehearsal must still check camera, microphone and actual model inference.
+
+Stop Demo only signals private process groups whose PID, kernel start time and boot ID
+match its saved ownership record. It skips old `.pid` files, reused PIDs and services
+started by hand. Stop those from their original terminal. No wildcard process killing.

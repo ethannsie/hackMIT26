@@ -11,16 +11,18 @@
     "check": "tsc --noEmit",
     "verify": "tsx scripts/verify-sims.ts",
     "verify:sandbox": "tsx scripts/verify-sandbox.ts",
-    "verify:all": "npm run verify && npm run verify:sandbox",
+    "verify:all": "tsx scripts/verify-all.ts",
     "panel": "python3 panel/panel_server.py",
-    "panel:test": "python3 panel/test_panel.py"
+    "panel:test": "python3 panel/test_panel.py",
+    "verify:audit": "tsx scripts/verify-audit.ts && tsx scripts/verify-inputs.ts && tsx scripts/verify-api.ts",
+    "verify:rope": "tsx scripts/verify-rope.ts"
   },
   "dependencies": {
     "katex": "^0.16.11",
     "matter-js": "^0.20.0"
   },
   "devDependencies": {
-    "@types/express": "^5.0.0",
+    "@types/express": "^4.17.25",
     "@types/matter-js": "^0.19.7",
     "@types/node": "^26.6.2",
     "concurrently": "^9.1.0",
@@ -29,6 +31,9 @@
     "openai": "^4.73.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^7.3.6"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
   }
 }

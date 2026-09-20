@@ -47,6 +47,11 @@ import json
 import os
 import queue
 import shlex
+import secrets
+import tempfile
+import socket
+import signal
+from urllib.parse import urlsplit
 import subprocess
 import sys
 import threading
@@ -57,6 +62,7 @@ from pathlib import Path
 from typing import Optional
 
 import cv2
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from camera import CameraWorker  # noqa: E402
@@ -69,8 +75,8 @@ REPO = HERE.parent
 
 PORT = int(os.environ.get("PANEL_PORT", "8770"))
 # Loopback by default. Everything that talks to the panel — the app's browser,
-# the kiosk page, demo.sh's health checks — runs on this box, and the API has
-# an unauthenticated poweroff on it. Widen it deliberately, not by default.
+# the kiosk page and demo.sh health checks — runs on this box. Host/Origin
+# checks and a shutdown session token provide additional protection.
 BIND = os.environ.get("PANEL_BIND", "127.0.0.1")
 CAPTURE_DIR = Path(os.environ.get("PANEL_CAPTURE_DIR", REPO / "captures"))
 ALLOW_SHUTDOWN = os.environ.get("PANEL_ALLOW_SHUTDOWN", "1") != "0"
@@ -86,6 +92,10 @@ CAPTURE_QUALITY = 95
 # Changes each time this process starts. The kiosk page compares it against
 # the one it loaded with and reloads itself on a mismatch, so restarting the
 # panel with new UI files never leaves the touchscreen running stale script.
+SESSION_TOKEN = secrets.token_urlsafe(32)
+MAX_BODY_BYTES = 1_000_000
+ALLOWED_ORIGINS = set(os.environ.get("PANEL_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173").split(","))
+
 BOOT_ID = f"{int(time.time())}-{os.getpid()}"
 
 
@@ -163,6 +173,8 @@ class PanelState:
         self.scan_active = False
         self.pending: Optional[bytes] = None
         self.pending_at = 0.0
+        self.pending_id: Optional[str] = None
+        self.saving = False
         self.last_saved: Optional[str] = None
         self.saved_count = 0
         self.shutting_down = False
@@ -190,6 +202,7 @@ class PanelState:
 
     def snapshot(self) -> dict:
         return {
+            "service": "hackmit-panel",
             "view": self.view,
             "app_mode": self.app_mode,
             "hand_switch": self.hand_switch,
@@ -256,6 +269,20 @@ CONTENT_TYPES = {
 }
 
 
+def write_capture(name: str, data: bytes) -> None:
+    """Publish only a complete file. A failed write leaves the capture retryable."""
+    CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".scan-", dir=CAPTURE_DIR)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        os.link(temporary, CAPTURE_DIR / name)  # exclusive, atomic final name
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "hackmit-panel"
@@ -267,15 +294,36 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- helpers -----------------------------------------------------------
 
+    def setup(self) -> None:
+        super().setup()
+        self.connection.settimeout(10)
+
+    def _trusted(self) -> bool:
+        # Host validation also rejects DNS rebinding to loopback.
+        try:
+            host = urlsplit("http://" + self.headers.get("Host", ""))
+            if host.hostname not in ("localhost", "127.0.0.1", "::1") or host.port != self.server.server_port:
+                return False
+            origin = self.headers.get("Origin")
+            own = {f"http://localhost:{self.server.server_port}", f"http://127.0.0.1:{self.server.server_port}"}
+            return not origin or origin in ALLOWED_ORIGINS | own
+        except ValueError:
+            return False
+
+    def _guard(self) -> bool:
+        if self._trusted():
+            return True
+        self.close_connection = True
+        self._json({"error": "untrusted host or origin"}, 403)
+        return False
+
     def _cors(self) -> None:
-        # The main app is a different origin (vite :5173) on the same host.
-        # With BIND on loopback only pages already running on this box can
-        # reach us, so a blanket allow is the honest configuration; it is the
-        # bind address, not this header, that keeps the shutdown endpoint off
-        # the venue Wi-Fi.
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "content-type")
+        origin = self.headers.get("Origin")
+        if origin and self._trusted():
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Panel-Token")
 
     def _json(self, obj: dict, status: int = 200) -> None:
         body = json.dumps(obj).encode()
@@ -297,15 +345,32 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _body(self) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
-        if not length:
-            return {}
+        if self.headers.get("Transfer-Encoding"):
+            raise ValueError("chunked request bodies are unsupported")
         try:
-            return json.loads(self.rfile.read(length) or b"{}")
-        except json.JSONDecodeError:
-            return {}
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            raise ValueError("invalid Content-Length") from None
+        if not 0 <= length <= MAX_BODY_BYTES:
+            raise ValueError("body exceeds 1 MB limit")
+        if length and self.headers.get_content_type() != "application/json":
+            raise ValueError("Content-Type must be application/json")
+        raw = self.rfile.read(length) if length else b"{}"
+        if length and len(raw) != length:
+            raise ValueError("incomplete body")
+        try:
+            def invalid_constant(value):
+                raise ValueError(f"non-finite JSON number: {value}")
+            body = json.loads(raw, parse_constant=invalid_constant)
+        except (ValueError, UnicodeError, RecursionError):
+            raise ValueError("invalid JSON") from None
+        if not isinstance(body, dict):
+            raise ValueError("body must be a JSON object")
+        return body
 
     def do_OPTIONS(self) -> None:  # noqa: N802
+        if not self._guard():
+            return
         self.send_response(204)
         self._cors()
         self.send_header("Content-Length", "0")
@@ -314,12 +379,17 @@ class Handler(BaseHTTPRequestHandler):
     # --- routing -----------------------------------------------------------
 
     def do_GET(self) -> None:  # noqa: N802
+        if not self._guard():
+            return
         path = self.path.split("?", 1)[0]
 
         if path in ("/", "/index.html"):
             return self._static("index.html")
         if path in ("/panel.css", "/panel.js", "/rope.css", "/rope.js"):
             return self._static(path.lstrip("/"))
+
+        if path == "/api/session":
+            return self._json({"token": SESSION_TOKEN})
 
         if path == "/api/rope/status":
             return self._json(rope_game.snapshot())
@@ -356,8 +426,14 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": f"no route for {path}"}, 404)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._guard():
+            return
         path = self.path.split("?", 1)[0]
-        body = self._body()
+        try:
+            body = self._body()
+        except (ValueError, TimeoutError, socket.timeout) as exc:
+            self.close_connection = True
+            return self._json({"error": str(exc)}, 400)
 
         rope_response = rope_game.post(path, body, state)
         if rope_response is not None:
@@ -464,6 +540,7 @@ class Handler(BaseHTTPRequestHandler):
                 state.view = "scan"
                 state.scan_active = True
                 state.pending = None
+                state.pending_id = None
             state.broadcast()
             return self._json(state.snapshot())
 
@@ -476,6 +553,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/scan/cancel":
             with state.lock:
                 state.pending = None
+                state.pending_id = None
                 state.scan_active = False
                 state.view = "home"
             state.broadcast()
@@ -484,6 +562,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/system/shutdown":
             if not ALLOW_SHUTDOWN:
                 return self._json({"error": "shutdown disabled (PANEL_ALLOW_SHUTDOWN=0)"}, 403)
+            if not secrets.compare_digest(self.headers.get("X-Panel-Token", ""), SESSION_TOKEN):
+                return self._json({"error": "refresh the panel before shutting down"}, 403)
             if body.get("confirm") is not True:
                 return self._json({"error": "send {\"confirm\": true}"}, 400)
             with state.lock:
@@ -527,6 +607,7 @@ class Handler(BaseHTTPRequestHandler):
         with state.lock:
             recapture = state.pending is not None
             state.pending = jpeg
+            state.pending_id = secrets.token_hex(12)
             state.pending_at = time.time()
             state.scan_active = True
             state.view = "scan"
@@ -536,32 +617,31 @@ class Handler(BaseHTTPRequestHandler):
     def _save(self) -> None:
         """Button 2. Writes the frozen frame and tells everyone where it went."""
         with state.lock:
-            pending = state.pending
-        if not pending:
-            return self._json({"error": "nothing captured yet — press 1 first"}, 409)
-
-        CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        name = f"scan-{stamp}.jpg"
-        # Two saves inside one second must not overwrite each other.
-        n = 1
-        while (CAPTURE_DIR / name).exists():
-            n += 1
-            name = f"scan-{stamp}-{n}.jpg"
-        (CAPTURE_DIR / name).write_bytes(pending)
-
-        with state.lock:
-            state.pending = None
-            state.last_saved = name
-            state.saved_count += 1
-            state.scan_active = False
-            state.view = "home"
-
-        # The main app listens for this and runs it through /api/extract, which
-        # is what makes the panel's scan button do physics instead of just
-        # writing a file to a disk nobody looks at.
-        state.broadcast("scan:saved", {"file": name, "url": f"/captures/{name}"})
-        return self._json({"ok": True, "file": name, "url": f"/captures/{name}"})
+            if state.saving:
+                return self._json({"error": "save already in progress"}, 409)
+            pending, capture_id = state.pending, state.pending_id
+            if not pending or not capture_id:
+                return self._json({"error": "nothing captured yet — press 1 first"}, 409)
+            state.saving = True
+        name = f"scan-{datetime.now():%Y%m%d-%H%M%S}-{capture_id}.jpg"
+        try:
+            write_capture(name, pending)
+            with state.lock:
+                # A recapture/cancel while writing belongs to a newer intent.
+                if state.pending is pending and state.pending_id == capture_id:
+                    state.pending = None
+                    state.pending_id = None
+                    state.scan_active = False
+                    state.view = "home"
+                state.last_saved = name
+                state.saved_count += 1
+            state.broadcast("scan:saved", {"file": name, "url": f"/captures/{name}"})
+            return self._json({"ok": True, "file": name, "url": f"/captures/{name}"})
+        except OSError:
+            return self._json({"error": "could not save capture; check disk space and retry"}, 500)
+        finally:
+            with state.lock:
+                state.saving = False
 
     def _sse(self, hand_frames: bool) -> None:
         q = hub.subscribe(skip=frozenset({"sim"}) if hand_frames else frozenset())
@@ -579,6 +659,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_event("sim", state.sim)
 
             last_hand = 0.0
+            last_ping = time.monotonic()
+            last_reading_stamp = None
             while True:
                 if hand_frames:
                     # Hand frames are their own cadence: the sim wants them at
@@ -586,27 +668,31 @@ class Handler(BaseHTTPRequestHandler):
                     now = time.monotonic()
                     if now - last_hand >= 1 / 30.0:
                         reading = camera.latest_reading()
-                        if reading is not None:
+                        stamp = reading.get("t_ms") if reading else None
+                        if stamp != last_reading_stamp:
                             self._send_event("hand", reading)
+                            last_reading_stamp = stamp
                         last_hand = now
+                    if now - last_ping >= 10:
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+                        last_ping = now
                     timeout = 0.02
                 else:
-                    timeout = 15.0
+                    timeout = 1.0
                 try:
                     event, data = q.get(timeout=timeout)
                     self._send_event(event, data)
                 except queue.Empty:
                     if not hand_frames:
-                        # Comment line: keeps proxies and sleepy Wi-Fi from
-                        # dropping an idle stream.
-                        self.wfile.write(b": ping\n\n")
-                        self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
+                        # Camera/light health changes independently of button presses.
+                        self._send_event("state", state.snapshot())
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
             pass
         finally:
             hub.unsubscribe(q)
 
-    def _send_event(self, event: str, data: dict) -> None:
+    def _send_event(self, event: str, data: Optional[dict]) -> None:
         payload = f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
         self.wfile.write(payload)
         self.wfile.flush()
@@ -626,17 +712,21 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
             last_seq = -1
+            last_sent = 0.0
             interval = 1.0 / STREAM_FPS
             while True:
                 seq = camera.frame_seq()
-                if seq == last_seq:
+                if seq == last_seq and time.monotonic() - last_sent < 1.0:
                     time.sleep(0.005)
                     continue
                 last_seq = seq
                 frame = camera.snapshot(overlay=overlay)
                 if frame is None:
-                    time.sleep(0.1)
-                    continue
+                    # A still-open MJPEG stream otherwise leaves its last hand
+                    # frozen on screen indefinitely after the camera disappears.
+                    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+                    cv2.putText(frame, "Camera unavailable", (105, 175), cv2.FONT_HERSHEY_SIMPLEX, 1, (200, 200, 200), 2)
+                    cv2.putText(frame, "Reconnect the webcam", (125, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (160, 160, 160), 1)
                 jpeg = encode_jpeg(frame, STREAM_QUALITY)
                 if jpeg is None:
                     continue
@@ -646,8 +736,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(jpeg)
                 self.wfile.write(b"\r\n")
                 self.wfile.flush()
+                last_sent = time.monotonic()
                 time.sleep(interval)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
             pass
         finally:
             if overlay:
@@ -657,6 +748,8 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
     camera.start()
+    state.sync_light()
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     status = camera.status()
 
     server = ThreadingHTTPServer((BIND, PORT), Handler)
@@ -672,6 +765,7 @@ def main() -> None:
         print("\n[panel] stopping")
     finally:
         camera.stop()
+        light.stop()
         server.server_close()
 
 

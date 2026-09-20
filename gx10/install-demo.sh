@@ -12,19 +12,15 @@ cd "$REPO"
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
 say "node deps"
-if [[ -d node_modules ]]; then echo "present"; else npm install --no-audit --no-fund; fi
+node -e 'const [a,b]=process.versions.node.split(".").map(Number); if (!(a===20 && b>=19 || a===22 && b>=12 || a>22)) process.exit(1)' || { echo "Node 20.19+ or 22.12+ required; update Node first" >&2; exit 1; }
+npm ci --no-audit --no-fund
 
 say "python venv (.venv) with mediapipe + opencv"
 # Ubuntu 24.04 refuses `pip install --user` (PEP 668); a venv sidesteps that
 # without touching the system python. --system-site-packages keeps apt's
 # python3-serial etc. visible for gx10/serial_bridge.py.
 [[ -d .venv ]] || python3 -m venv --system-site-packages .venv
-if .venv/bin/python -c 'import mediapipe, cv2, numpy' 2>/dev/null; then
-  echo "present: $(.venv/bin/python -c 'import mediapipe, cv2; print("mediapipe", mediapipe.__version__, "opencv", cv2.__version__)')"
-else
-  .venv/bin/python -m pip install --upgrade pip
-  .venv/bin/python -m pip install -r requirements.txt
-fi
+.venv/bin/python -m pip install -r requirements.txt
 
 say "hand landmark model"
 if [[ -f hand_landmarker.task ]]; then

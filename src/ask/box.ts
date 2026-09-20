@@ -83,11 +83,13 @@ export class AskBox {
   private async refreshVoice(): Promise<void> {
     this.voice = await voiceState()
     const ready = this.voice === 'ready'
-    this.micBtn.disabled = !ready
+    this.micBtn.disabled = !ready && !this.recorder.recording
     this.micBtn.title = ready
       ? `Press to start listening, press again to stop (up to ${RECORD_SECONDS} s)`
       : this.voice === 'no-key'
         ? 'Voice needs DEEPGRAM_API_KEY in .env — type the question instead'
+        : this.voice === 'invalid-key' ? 'Voice credentials were rejected — type the question instead'
+        : this.voice === 'unavailable' ? 'Transcription service unavailable — type the question instead'
         : 'Voice needs the internet and the box is offline — type the question instead'
   }
 
@@ -95,6 +97,8 @@ export class AskBox {
     if (this.voice === 'ready') return null
     return this.voice === 'no-key'
       ? 'voice is off: no Deepgram key on this box — type the question instead'
+      : this.voice === 'invalid-key' ? 'voice is off: Deepgram rejected the key — type the question instead'
+      : this.voice === 'unavailable' ? 'voice is off: transcription service unavailable — type the question instead'
       : 'voice is off: the box is offline — type the question instead'
   }
 
@@ -104,7 +108,7 @@ export class AskBox {
 
   /** Send whatever is typed. */
   async ask(question = this.input.value.trim()): Promise<void> {
-    if (!question || this.busy) return
+    if (!question || this.busy || this.recorder.recording) return
     this.input.value = question
     this.setBusy(true, 'thinking…')
     this.onPhase({ phase: 'thinking', heard: question })
@@ -164,6 +168,7 @@ export class AskBox {
     }
     this.answer.hidden = true
     this.sources.hidden = true
+    this.showState('Waiting for microphone permission…', 'warn')
     this.micBtn.classList.add('on')
     this.micBtn.textContent = '■'
     this.micBtn.title = 'Stop and ask'

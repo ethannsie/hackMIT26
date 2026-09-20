@@ -8,7 +8,7 @@
  *
  * Every vector here is in newtons with +y UP, matching the derivation panel.
  */
-import type { SimParams } from './params.ts'
+import { INERTIA_COEFF, type SimParams } from './params.ts'
 import type { BodyState } from './world.ts'
 
 export type ForceKind = 'weight' | 'normal' | 'friction' | 'tension' | 'applied' | 'net'
@@ -44,7 +44,8 @@ export function forcesFor(params: SimParams, state: BodyState): ForceVector[] {
   switch (params.kind) {
     case 'projectile': {
       const W = vec('W', 'Weight', 'weight', 0, -m * params.g)
-      return [W, netOf([W])]
+      const list = state.contact === 'ground' ? [W, vec('N', 'Ground reaction', 'normal', 0, m * params.g)] : [W]
+      return [...list, netOf(list)]
     }
 
     case 'inclined_plane': {
@@ -54,6 +55,10 @@ export function forcesFor(params: SimParams, state: BodyState): ForceVector[] {
       const n: [number, number] = [Math.sin(th), Math.cos(th)]
 
       const W = vec('W', 'Weight', 'weight', 0, -m * params.g)
+      if (state.contact !== 'ramp') {
+        const list = state.contact === 'ground' ? [W, vec('N', 'Ground reaction', 'normal', 0, m * params.g)] : [W]
+        return [...list, netOf(list)]
+      }
       const Nmag = m * params.g * Math.cos(th)
       const N = vec('N', 'Normal force', 'normal', n[0] * Nmag, n[1] * Nmag)
 
@@ -61,12 +66,15 @@ export function forcesFor(params: SimParams, state: BodyState): ForceVector[] {
       const vAlong = state.velocity_ms[0] * d[0] + state.velocity_ms[1] * d[1]
       const driving = m * params.g * Math.sin(th)
       let fMag: number
-      if (Math.abs(vAlong) < 1e-3) {
+      if (params.motion === 'rolling') {
+        const k = INERTIA_COEFF[params.shape]
+        fMag = driving * k / (1 + k)
+      } else if (Math.abs(vAlong) < 1e-3) {
         fMag = Math.min(driving, params.mu_kinetic * Nmag)
       } else {
         fMag = params.mu_kinetic * Nmag
       }
-      const sign = Math.abs(vAlong) < 1e-3 ? 1 : Math.sign(vAlong)
+      const sign = params.motion === 'rolling' || Math.abs(vAlong) < 1e-3 ? 1 : Math.sign(vAlong)
       const f = vec('f', 'Friction', 'friction', -d[0] * sign * fMag, -d[1] * sign * fMag)
 
       const list = [W, N, f]
@@ -102,7 +110,7 @@ export function forcesFor(params: SimParams, state: BodyState): ForceVector[] {
       // track under standard gravity.
       const g = 9.81
       const W = vec('W', 'Weight', 'weight', 0, -m * g)
-      const N = vec('N', 'Normal force', 'normal', 0, m * g)
+      const N = vec('N', 'Normal force', 'normal', 0, state.contact === 'ground' ? m * g : 0)
       // Between collisions these cancel and the cart coasts; the collision
       // itself is impulsive and too brief to draw meaningfully.
       return [W, N, netOf([W, N])]
@@ -110,13 +118,13 @@ export function forcesFor(params: SimParams, state: BodyState): ForceVector[] {
 
     case 'rolling_without_slipping': {
       const W = vec('W', 'Weight', 'weight', 0, -m * params.g)
-      const N = vec('N', 'Normal force', 'normal', 0, m * params.g)
+      const N = vec('N', 'Normal force', 'normal', 0, state.contact === 'ground' ? m * params.g : 0)
       const list = [W, N]
       return [
         ...list,
         {
           ...netOf(list),
-          name: 'Net force (zero — rolling at constant speed does not need one)',
+          name: 'Net force',
         },
       ]
     }

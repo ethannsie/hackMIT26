@@ -16,12 +16,12 @@ gsettings set org.gnome.desktop.session idle-delay 0 || true
 gsettings set org.gnome.desktop.screensaver lock-enabled false || true
 gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type nothing || true
 
-echo "== ollama: listen on the LAN, keep models resident =="
+echo "== ollama: listen on loopback, keep models resident =="
 command -v ollama >/dev/null || curl -fsSL https://ollama.com/install.sh | sh
 sudo mkdir -p /etc/systemd/system/ollama.service.d
 sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null <<'CONF'
 [Service]
-Environment="OLLAMA_HOST=0.0.0.0"
+Environment="OLLAMA_HOST=127.0.0.1"
 Environment="OLLAMA_KEEP_ALIVE=-1"
 CONF
 sudo systemctl daemon-reload
@@ -41,9 +41,8 @@ sudo apt-get install -y -qq python3-serial python3-websockets >/dev/null
 echo "== mqtt broker for the camera ring light (hackmit_camera_light/) =="
 sudo apt-get install -y -qq mosquitto mosquitto-clients >/dev/null
 sudo tee /etc/mosquitto/conf.d/hackmit.conf >/dev/null <<'CONF'
-# HackMIT scan light: the ESP32 on the same Wi-Fi subscribes here. LAN only,
-# no auth — hackathon box, and the topic only switches a lamp.
-listener 1883 0.0.0.0
+# Local publisher only by default. See gx10/README.md for restricted ESP32 access.
+listener 1883 127.0.0.1
 allow_anonymous true
 CONF
 sudo systemctl enable --now mosquitto
@@ -51,7 +50,7 @@ sudo systemctl restart mosquitto
 
 echo "== app =="
 command -v node >/dev/null || { curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs; }
-cd "$(dirname "$0")/.." && npm install --silent
+cd "$(dirname "$0")/.." && npm ci --silent
 [ -f .env ] || cp .env.example .env
 
 echo

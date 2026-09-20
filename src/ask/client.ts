@@ -1,3 +1,4 @@
+import { request } from '../net/request.ts'
 /**
  * Browser side of the two text jobs the local model does: writing a problem
  * and answering a visitor. Same /api proxy as extraction; the browser never
@@ -14,6 +15,7 @@ export interface GenerateResult extends ValidationResult {
 
 export interface AskContext {
   raw_text?: string
+  current_givens?: string
   /** "period_s = 2.01 s" lines, so the tutor can refer to the numbers on screen. */
   solutions?: string[]
 }
@@ -42,42 +44,43 @@ async function failure(res: Response): Promise<Error> {
   return new Error(detail || `${res.status} ${res.statusText}`)
 }
 
-export async function generateProblem(problem_type?: string): Promise<GenerateResult> {
-  const res = await fetch('/api/generate', {
+export async function generateProblem(problem_type?: string, signal?: AbortSignal): Promise<GenerateResult> {
+  const res = await request('/api/generate', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ problem_type }),
-  })
+    signal,
+  }, 150_000)
   if (!res.ok) throw await failure(res)
   return (await res.json()) as GenerateResult
 }
 
 export async function askQuestion(question: string, context: AskContext): Promise<AskResult> {
-  const res = await fetch('/api/ask', {
+  const res = await request('/api/ask', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ question, context }),
-  })
+  }, 90_000)
   if (!res.ok) throw await failure(res)
   return (await res.json()) as AskResult
 }
 
 export async function transcribe(audio: Blob): Promise<TranscribeResult> {
-  const res = await fetch('/api/transcribe', {
+  const res = await request('/api/transcribe', {
     method: 'POST',
     headers: { 'content-type': audio.type || 'audio/webm' },
     body: audio,
-  })
+  }, 20_000)
   if (!res.ok) throw await failure(res)
   return (await res.json()) as TranscribeResult
 }
 
-export type VoiceState = 'ready' | 'offline' | 'no-key'
+export type VoiceState = 'ready' | 'offline' | 'no-key' | 'invalid-key' | 'unavailable'
 
 /** Whether a spoken question can be transcribed right now. */
 export async function voiceState(): Promise<VoiceState> {
   try {
-    const res = await fetch('/api/health', { cache: 'no-store' })
+    const res = await request('/api/health', { cache: 'no-store' })
     if (!res.ok) return 'offline'
     const data = (await res.json()) as { voice?: VoiceState }
     return data.voice ?? 'no-key'

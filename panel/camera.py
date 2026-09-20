@@ -254,10 +254,11 @@ class CameraWorker:
         self.model_path = find_model(model_path)
 
         self._lock = threading.Lock()
-        self._frame: Optional[np.ndarray] = None       # latest raw (mirrored) frame
+        self._frame: Optional[np.ndarray] = None       # latest unmirrored frame for reading printed text
         self._overlay: Optional[np.ndarray] = None     # latest frame with skeleton
         self._reading: Optional[HandReading] = None
         self._frame_seq = 0
+        self._frame_at = 0.0
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -286,20 +287,38 @@ class CameraWorker:
         if self._thread:
             self._thread.join(timeout=2.0)
             self._thread = None
+        self._invalidate("camera stopped")
 
     def set_tracking(self, wanted: bool) -> None:
         """Turn landmark detection on or off without touching the capture loop."""
         self._tracking_wanted = wanted
+        if not wanted:
+            with self._lock:
+                self._reading = None
+                self._overlay = None
+
+    def _invalidate(self, error: str) -> None:
+        self._camera_ok = False
+        self._tracking_active = False
+        self._error = error
+        with self._lock:
+            self._reading = None
+            self._frame = None
+            self._overlay = None
+            self._frame_at = 0.0
+        self._last_palm_px = None
+        self._pinch_latched = False
+        self._smoother.reset()
 
     # --- reads -------------------------------------------------------------
 
     def status(self) -> dict:
         return {
-            "camera_ok": self._camera_ok,
+            "camera_ok": self._camera_ok and time.monotonic() - self._frame_at <= 1.0,
             "error": self._error,
             "fps": round(self._fps, 1),
             "tracking_active": self._tracking_active,
-            "hand_visible": self._reading is not None,
+            "hand_visible": self.latest_reading() is not None,
             "mediapipe": HAVE_MEDIAPIPE,
             "mediapipe_error": MEDIAPIPE_ERROR,
             "model": str(self.model_path) if self.model_path else None,
@@ -307,13 +326,17 @@ class CameraWorker:
 
     def latest_reading(self) -> Optional[dict]:
         with self._lock:
-            return self._reading.as_dict() if self._reading else None
+            reading = self._reading
+            return reading.as_dict() if reading and time.monotonic() * 1000 - reading.t_ms <= 300 else None
 
     def snapshot(self, overlay: bool = False) -> Optional[np.ndarray]:
         """A private copy of the newest frame, safe to hand to another thread."""
         with self._lock:
-            src = self._overlay if (overlay and self._overlay is not None) else self._frame
-            return None if src is None else src.copy()
+            if self._frame is None or time.monotonic() - self._frame_at > 1.0:
+                return None
+            if overlay:
+                return self._overlay.copy() if self._overlay is not None else cv2.flip(self._frame, 1)
+            return self._frame.copy()
 
     def frame_seq(self) -> int:
         return self._frame_seq
@@ -325,6 +348,7 @@ class CameraWorker:
         if not cap.isOpened():
             self._camera_ok = False
             self._error = f"could not open camera index {self.index}"
+            cap.release()
             return None
         # MJPEG first, then size, then rate — V4L2 negotiates in that order.
         # OpenCV's default is raw YUYV, and a USB 2 webcam cannot move
@@ -384,19 +408,22 @@ class CameraWorker:
             if cap is None:
                 # Keep retrying: a webcam unplugged mid-demo should recover
                 # when it comes back, not take the panel down with it.
-                time.sleep(1.0)
+                if self._stop.wait(1.0): break
                 cap = self._open()
                 continue
 
-            ok, frame = cap.read()
+            try:
+                ok, frame = cap.read()
+            except (cv2.error, OSError):
+                ok, frame = False, None
             if not ok:
-                self._camera_ok = False
-                self._error = "camera read failed; reopening"
+                self._invalidate("camera read failed; reopening")
                 cap.release()
                 cap = None
                 continue
 
-            frame = cv2.flip(frame, 1)  # mirror: the panel is used like a mirror
+            raw_frame = frame
+            frame = cv2.flip(frame, 1)  # mirror only the hand interaction
             now = time.monotonic()
 
             want = self._tracking_wanted and HAVE_MEDIAPIPE and self.model_path is not None
@@ -417,11 +444,25 @@ class CameraWorker:
 
             overlay = None
             if tracker is not None:
-                overlay = self._track(tracker, frame, now)
+                try:
+                    overlay = self._track(tracker, frame, now)
+                except Exception as exc:
+                    self._invalidate(f"tracking failed; restarting: {exc}")
+                    try:
+                        tracker.close()
+                    except Exception:
+                        pass
+                    tracker = None
+                    self._stop.wait(1.0)
+                    continue
 
             with self._lock:
-                self._frame = frame
+                self._frame = raw_frame
+                self._frame_at = now
                 self._overlay = overlay
+            self._camera_ok = True
+            if tracker is not None or not want:
+                self._error = ""
             self._frame_seq += 1
 
             frames += 1

@@ -387,20 +387,16 @@ what the extraction prompt is most carefully tuned for.
   thematically, cannot be done without a 3D solver.
 
 **Guardrails.** Values outside plausible ranges are clamped, never silently: a
-negative mass is dropped, μ above 2 is clamped, a ramp past 89° is clamped, and
-**every repair is printed in the derivation panel.** If a number on screen is not
-the student's, the system says so.
+out-of-range masses, friction and angles are repaired with explicit notes. Missing essential givens and unsupported energy/frequency ranges are rejected. **Every repaired or low-confidence draft requires confirmation before loading.** The original statement and current simulation givens are shown separately.
 
 ---
 
 ## Known gaps
 
-- `tension_n` is in the `Askable` enum but no solver produces it — a leftover
-  from sketching Atwood. Degrades gracefully (falls back to all solutions for
-  that type) but should either be implemented or removed.
+- The finite ramp supports downhill initial motion. Uphill launches are rejected; use Sandbox for a custom arrangement.
 - Ramp angle is slider-driven today; webcam ramp tilt is deferred.
 - The renderer is 2D canvas, sufficient for the initial demo. A three.js scene
-  is deferred. Webcam tracking and the two-display controller remain to integrate.
+  is deferred. Webcam tracking and the two-display controller are integrated; physical rehearsal remains necessary after changes.
 - Motion graphs plot one body at a time.
 - Rotating-frame accuracy is verified over 400 steps. The centrifugal term grows
   with radius, so very long runs will drift — physically correct, but the

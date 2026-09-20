@@ -34,7 +34,7 @@ fail() {
   zenity --error --title="HackMIT demo" --text="$*\n\nLog: $RUN/demo.log" 2>/dev/null || true
   exit 1
 }
-listening() { curl -s -m 2 -o /dev/null "http://localhost:$1$2"; }
+listening() { "$PY" "$REPO/gx10/health.py" "$1" "$2"; }
 wait_for() { # port path seconds
   local i
   for ((i = 0; i < $3; i++)); do listening "$1" "$2" && return 0; sleep 1; done
@@ -46,8 +46,10 @@ start() { # name cmd...
   # 9>&- : do not hand the lock fd to the service, or the lock is held for as
   # long as the service lives and the next click reports "already starting".
   setsid "$@" >"$RUN/$name.log" 2>&1 </dev/null 9>&- &
-  echo $! >"$RUN/$name.pid"
-  echo "   $name: started (pid $!, log .demo/$name.log)"
+  local pid=$!
+  sleep 0.1
+  "$PY" "$REPO/gx10/process_owner.py" record "$RUN/$name.owner.json" "$pid" || fail "Could not record ownership of $name; inspect .demo/$name.log"
+  echo "   $name: started (pid $pid, log .demo/$name.log)"
 }
 
 # ---- config ---------------------------------------------------------------
@@ -68,7 +70,7 @@ else
 fi
 # Load the extraction model now so the first photo does not pay the ~30 s load.
 # Empty prompt = load only. keep_alive -1 = stay resident.
-curl -s -m 900 localhost:11434/api/generate -d "{\"model\":\"$MODEL\",\"keep_alive\":-1}" >/dev/null 2>&1 9>&- &
+curl -fsS -m 900 localhost:11434/api/generate -d "{\"model\":\"$MODEL\",\"keep_alive\":-1}" >/dev/null 2>&1 9>&- &
 echo "   warming $MODEL in the background"
 
 # ---- mqtt broker (ring light) ---------------------------------------------
@@ -93,7 +95,8 @@ if listening 5173 /; then echo "   already up"; else start web npx vite --port 5
 wait_for 8770 /api/state 30 || fail "panel did not come up on :8770 — see .demo/panel.log"
 wait_for 8787 /api/health 45 || fail "API did not come up on :8787 — see .demo/api.log"
 wait_for 5173 / 90 || fail "web app did not come up on :5173 — see .demo/web.log"
-echo "   all three answering"
+wait_for 8787 /api/ready 10 || fail "API is up but required extraction/text models are unavailable — inspect /api/ready and .demo/api.log"
+echo "   all three identified; required models available"
 
 # ---- displays -------------------------------------------------------------
 # xrandr --listmonitors:  "0: +*USB-C-2 1920/344x1080/194+1024+0  USB-C-2"

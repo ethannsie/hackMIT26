@@ -1,3 +1,4 @@
+import { request } from '../net/request.ts'
 /**
  * Optional link to the 7 in. control panel (panel/panel_server.py).
  *
@@ -21,6 +22,7 @@ export interface SimControl {
 
 export interface PanelEvents {
   /** A scan was saved on the panel. The Blob is the full-quality JPEG. */
+  onScanPending?(): () => boolean
   onScan(image: Blob, file: string): void
   /** Connection state changed, for the status line. */
   onLink?(up: boolean): void
@@ -42,6 +44,10 @@ export class PanelLink {
   /** The panel's current view, from its state events. */
   view = 'home'
   private simInFlight = false
+  private latestAsk: unknown
+  private latestSim: unknown
+  private lifetime = new AbortController()
+  private scanSequence = 0
 
   constructor(
     private readonly events: PanelEvents,
@@ -54,6 +60,7 @@ export class PanelLink {
 
   connect(): void {
     if (this.stream) return
+    this.lifetime = new AbortController()
     const stream = new EventSource(`${this.base}/api/events`)
     this.stream = stream
 
@@ -61,6 +68,8 @@ export class PanelLink {
       this.setUp(true)
       // The panel may have restarted; it has no memory of our mode.
       if (this.mode) void this.setMode(this.mode)
+      if (this.latestAsk !== undefined) this.sendAsk(this.latestAsk)
+      if (this.latestSim !== undefined) this.sendSim(this.latestSim)
     })
     stream.addEventListener('error', () => this.setUp(false))
 
@@ -101,10 +110,12 @@ export class PanelLink {
    * rather than queueing them, and the next one carries the newer state.
    */
   sendSim(payload: unknown): void {
+    this.latestSim = payload
     if (!this.up || this.simInFlight) return
     this.simInFlight = true
-    fetch(`${this.base}/api/sim/snapshot`, {
+    request(`${this.base}/api/sim/snapshot`, {
       method: 'POST',
+      signal: this.lifetime.signal,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     })
@@ -116,15 +127,19 @@ export class PanelLink {
 
   /** The Ask box's phase, so the panel's Ask view shows the same thing. */
   sendAsk(payload: unknown): void {
+    this.latestAsk = payload
     if (!this.up) return
-    fetch(`${this.base}/api/ask/state`, {
+    request(`${this.base}/api/ask/state`, {
       method: 'POST',
+      signal: this.lifetime.signal,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     }).catch(() => undefined)
   }
 
   disconnect(): void {
+    this.lifetime.abort()
+    this.scanSequence++
     this.stream?.close()
     this.stream = null
     this.setUp(false)
@@ -134,8 +149,9 @@ export class PanelLink {
   async setMode(mode: 'problem' | 'sandbox'): Promise<void> {
     this.mode = mode
     try {
-      await fetch(`${this.base}/api/mode`, {
+      await request(`${this.base}/api/mode`, {
         method: 'POST',
+        signal: this.lifetime.signal,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ mode }),
       })
@@ -145,10 +161,13 @@ export class PanelLink {
   }
 
   private async fetchScan(url: string, file: string): Promise<void> {
+    const sequence = ++this.scanSequence
+    const current = this.events.onScanPending?.() ?? (() => true)
     try {
-      const res = await fetch(`${this.base}${url}`)
+      const res = await request(`${this.base}${url}`, { signal: this.lifetime.signal })
       if (!res.ok) throw new Error(String(res.status))
-      this.events.onScan(await res.blob(), file)
+      const blob = await res.blob()
+      if (sequence === this.scanSequence && current() && !this.lifetime.signal.aborted) this.events.onScan(blob, file)
     } catch {
       // The panel told us about a file we cannot read. Nothing useful to do
       // here; the panel already reported the save on its own screen.

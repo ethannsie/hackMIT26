@@ -82,6 +82,7 @@ function analyse(scene: SandboxScene): {
   }
   if (scene.gravity_ms2 !== 0) {
     momentum.push(`gravity (${scene.gravity_ms2} m/s²) is an external force on every body`)
+    angular.push('gravity exerts a torque about the origin')
   }
 
   for (const e of scene.entities) {
@@ -104,12 +105,18 @@ function analyse(scene: SandboxScene): {
         angular.push(`${e.id} exerts an external torque`)
         break
       case 'pendulum':
+        angular.push(`${e.id}'s anchor can exert a torque about the origin`)
+        energy.push(`${e.id} has inelastic contacts; impacts can dissipate energy`)
         momentum.push(`${e.id}'s pivot holds it in place`)
         break
       case 'spring':
+        angular.push(`${e.id}'s anchor can exert a torque about the origin`)
+        energy.push(`${e.id} has inelastic contacts; impacts can dissipate energy`)
         momentum.push(`${e.id}'s anchor holds it in place`)
         break
       case 'spring_h':
+        angular.push(`${e.id}'s anchor can exert a torque about the origin`)
+        energy.push(`${e.id} has inelastic contacts; impacts can dissipate energy`)
         if (e.friction > 0) energy.push(`${e.id}'s block has friction ${e.friction}`)
         momentum.push(`${e.id}'s anchor holds it in place`)
         break
@@ -161,6 +168,7 @@ export class InvariantTracker {
       px += s.mass_kg * s.velocity_ms[0]
       py += s.mass_kg * s.velocity_ms[1]
       // L_z about the scene origin: m (x·vy − y·vx)
+      L -= s.inertia_kgm2 * s.angular_velocity_rads // Matter spin is clockwise; SI z is counter-clockwise
       L += s.mass_kg * (s.position_m[0] * s.velocity_ms[1] - s.position_m[1] * s.velocity_ms[0])
     }
 
@@ -209,8 +217,8 @@ export class InvariantTracker {
         reasons: broken.momentum,
         initial: Math.hypot(init.px, init.py),
         current: pNow,
-        drift_abs: pNow - Math.hypot(init.px, init.py),
-        drift_pct: pct(pNow - Math.hypot(init.px, init.py), Math.max(this.pMax, 1e-6)),
+        drift_abs: Math.hypot(px - init.px, py - init.py),
+        drift_pct: pct(Math.hypot(px - init.px, py - init.py), Math.max(this.pMax, 1e-6)),
         unit: 'kg·m/s',
       },
       {

@@ -38,6 +38,7 @@
         grid-column: 1 / -1;
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 8px;
         padding: 8px 14px;
         border-bottom: 1px solid var(--line);
@@ -260,6 +261,12 @@
       .help-close { margin-top: 18px; }
 
       [hidden] { display: none !important; }
+      .scan-confirmation { position: fixed; z-index: 50; inset: 15% max(16px, calc((100vw - 650px)/2)); overflow: auto; padding: 24px; background: var(--surface); border: 2px solid var(--warn); border-radius: 12px; box-shadow: 0 0 0 100vmax #0009; }
+      .scan-confirmation p { white-space: pre-wrap; }
+      .scan-confirmation button { margin: 8px 8px 0 0; }
+      .current-givens { overflow-wrap: anywhere; color: var(--accent); }
+      @media (max-width: 1000px) { body { grid-template-columns: minmax(0, 1fr) 320px; } #status { flex: 1 1 100%; max-width: none; text-align: left; } header .sep { display: none; } }
+      @media (max-width: 700px) { body { display: block; overflow: auto; } header { position: relative; } main { height: 55vh; min-height: 300px; } aside { border-left: 0; border-top: 1px solid var(--line); overflow: visible; } #scrub-hint { display: none; } }
     </style>
   </head>
   <body>
@@ -287,7 +294,7 @@
       <span class="file-wrap"><button type="button">Photo…</button><input id="photo" type="file" accept="image/*" /></span>
       <button id="generate" title="Have the local model write a new problem of the selected type (N)">✨ New problem</button>
       <button id="help-open" class="icon-btn" title="Keyboard shortcuts (?)">?</button>
-      <div id="status"></div>
+      <div role="status" aria-live="polite" id="status"></div>
     </header>
 
     <main>

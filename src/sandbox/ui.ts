@@ -105,6 +105,7 @@ export class SandboxMode {
   }
 
   stop(): void {
+    this.handCoupling.reset()
     this.canvas.removeEventListener('mousedown', this.onDown)
     this.canvas.removeEventListener('mousemove', this.onMove)
     window.removeEventListener('mouseup', this.onUp)
@@ -125,6 +126,7 @@ export class SandboxMode {
 
   /** Rebuild from the authored scene. Every edit goes through here. */
   private rebuild(): void {
+    this.handCoupling.reset()
     this.world.dispose()
     this.world = new SandboxWorld(this.scene)
     this.tracker.reset()
@@ -272,7 +274,7 @@ export class SandboxMode {
     }
 
     this.running = running
-    let couplingState = this.handCoupling.update(this.world, hand)
+    let couplingState = running ? null : this.handCoupling.update(this.world, null)
     if (running) {
       this.world.advanceWith(elapsedMs, () => {
         couplingState = this.handCoupling.update(this.world, hand)
@@ -281,7 +283,7 @@ export class SandboxMode {
       })
       // Matter integrates after the coupling callback. Reapply the held
       // position after the batch so gravity cannot pull a grabbed body away.
-      if (couplingState.contact) couplingState = this.handCoupling.update(this.world, hand)
+      if (couplingState?.contact) couplingState = this.handCoupling.update(this.world, hand)
       this.holdDragged()
     }
     this.view.draw(this.world, this.selectedId, this.armed, this.cursor, {
@@ -484,6 +486,7 @@ export class SandboxMode {
     groundBox.type = 'checkbox'
     groundBox.checked = this.scene.ground
     groundBox.addEventListener('change', () => {
+      this.beforeChange('before ground change')
       this.scene.ground = groundBox.checked
       this.rebuild()
       this.renderPanel()
@@ -539,12 +542,14 @@ export class SandboxMode {
         const ent = entity
         box.appendChild(
           this.slider('start vx (m/s)', ent.velocity_ms[0], -8, 8, 0.1, (v) => {
+            this.beforeChange(`before ${ent.id} horizontal velocity change`)
             ent.velocity_ms = [v, ent.velocity_ms[1]]
             this.rebuild()
           }),
         )
         box.appendChild(
           this.slider('start vy (m/s)', ent.velocity_ms[1], -8, 8, 0.1, (v) => {
+            this.beforeChange(`before ${ent.id} vertical velocity change`)
             ent.velocity_ms = [ent.velocity_ms[0], v]
             this.rebuild()
           }),

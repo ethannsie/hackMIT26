@@ -33,7 +33,7 @@
     if (pending) return;
     pending = true; disableControls();
     try {
-      const res = await fetch('/api/rope/control', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, ...data }) });
+      const res = await fetch('/api/rope/control', { signal: AbortSignal.timeout(8000), method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, ...data }) });
       if (!res.ok) throw new Error('Control failed');
       status.textContent = action === 'select' ? `Starting level ${data.level}…`
         : action === 'next' ? 'Starting the next puzzle…'
@@ -79,7 +79,7 @@
     if (view.hidden || busy || pending) return;
     busy = true;
     try {
-      const res = await fetch('/api/rope/status');
+      const res = await fetch('/api/rope/status', { signal: AbortSignal.timeout(8000) });
       if (!res.ok) throw new Error('No status');
       const result = await res.json();
       if (!pending) { game = result; render(); }

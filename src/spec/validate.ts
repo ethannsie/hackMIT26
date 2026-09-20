@@ -19,6 +19,7 @@ import {
   type SpecGiven,
   type SpecObject,
 } from './types.ts'
+import { MAX_INPUT_SPEED_MS, MAX_COLLISION_INPUT_MS, MAX_UNFORCED_SPEED_MS, MAX_ORBIT_FREQUENCY_RADS } from '../sim/limits.ts'
 
 export interface ValidationResult {
   ok: boolean
@@ -39,27 +40,27 @@ interface Range {
 /** Plausible ranges for intro mechanics. Outside these we clamp and say so. */
 const RANGES: Partial<Record<keyof SpecGiven, Range>> = {
   gravity_ms2: { min: 0.1, max: 30 },
-  v0_ms: { min: 0, max: 200 },
+  v0_ms: { min: 0, max: MAX_INPUT_SPEED_MS },
   launch_angle_deg: { min: -89, max: 89 },
   h0_m: { min: 0, max: 500 },
   incline_angle_deg: { min: 0, max: 89 },
   ramp_length_m: { min: 0.01, max: 100 },
   mass_kg: { min: 0.001, max: 10_000 },
   mu_kinetic: { min: 0, max: 2 },
-  initial_velocity_ms: { min: -200, max: 200 },
+  initial_velocity_ms: { min: -MAX_INPUT_SPEED_MS, max: MAX_INPUT_SPEED_MS },
   length_m: { min: 0.01, max: 100 },
   theta0_deg: { min: -170, max: 170 },
   m1_kg: { min: 0.001, max: 10_000 },
   m2_kg: { min: 0.001, max: 10_000 },
-  v1_ms: { min: -200, max: 200 },
-  v2_ms: { min: -200, max: 200 },
+  v1_ms: { min: -MAX_COLLISION_INPUT_MS, max: MAX_COLLISION_INPUT_MS },
+  v2_ms: { min: -MAX_COLLISION_INPUT_MS, max: MAX_COLLISION_INPUT_MS },
   restitution: { min: 0, max: 1 },
   radius_m: { min: 0.001, max: 50 },
   // Signed on purpose: a negative charge orbits the opposite way, and that
   // reversal is most of what the magnetic-field sim is for.
   charge_c: { min: -1000, max: 1000 },
   b_field_tesla: { min: -100, max: 100 },
-  omega_rads: { min: -100, max: 100 },
+  omega_rads: { min: -4, max: 4 },
   impact_parameter_m: { min: -100, max: 100 },
 }
 
@@ -88,15 +89,14 @@ function rangeFor(key: keyof SpecGiven, type: unknown): Range {
 /** Fields without which a given problem type cannot be simulated at all. */
 const REQUIRED_BY_TYPE: Record<ProblemType, (keyof SpecGiven)[]> = {
   projectile: ['v0_ms', 'launch_angle_deg'],
-  inclined_plane: ['incline_angle_deg'],
-  pendulum: ['length_m'],
-  collision_1d: ['m1_kg', 'm2_kg'],
-  rolling_without_slipping: ['radius_m'],
-  circular_motion: ['radius_m'],
-  // Without a field and a charge there is no force at all, so there is no sim.
-  charged_particle_magnetic: ['b_field_tesla', 'charge_c'],
-  rotating_frame: ['omega_rads'],
-  angular_momentum_point: ['impact_parameter_m'],
+  inclined_plane: ['incline_angle_deg', 'ramp_length_m', 'mass_kg', 'mu_kinetic', 'initial_velocity_ms', 'body_motion'],
+  pendulum: ['length_m', 'theta0_deg', 'mass_kg'],
+  collision_1d: ['m1_kg', 'm2_kg', 'v1_ms', 'v2_ms', 'restitution'],
+  rolling_without_slipping: ['radius_m', 'mass_kg', 'v0_ms', 'body_shape'],
+  circular_motion: ['radius_m', 'v0_ms', 'mass_kg'],
+  charged_particle_magnetic: ['b_field_tesla', 'charge_c', 'mass_kg', 'v0_ms'],
+  rotating_frame: ['omega_rads', 'v0_ms', 'radius_m', 'mass_kg'],
+  angular_momentum_point: ['impact_parameter_m', 'mass_kg', 'v0_ms'],
 }
 
 function isFiniteNumber(v: unknown): v is number {
@@ -178,6 +178,33 @@ export function validateSpec(raw: unknown): ValidationResult {
     given.gravity_ms2 = 9.81
     repairs.push('gravity_ms2 missing; defaulted to 9.81')
   }
+
+  // Only conventional coordinate choices may be filled in, always visibly.
+  const defaultValue = (key: keyof SpecGiven, value: number): void => {
+    if (given[key] === null) {
+      (given[key] as number | null) = value
+      repairs.push(`${key} missing; assumed ${value}. Confirm before using this problem.`)
+    }
+  }
+  if (problem_type === 'projectile') defaultValue('h0_m', 0)
+  if (problem_type === 'charged_particle_magnetic' || problem_type === 'rotating_frame') defaultValue('launch_angle_deg', 0)
+  if (problem_type === 'rolling_without_slipping' && given.v0_ms === null && given.initial_velocity_ms !== null) given.v0_ms = given.initial_velocity_ms
+  if (problem_type === 'inclined_plane') {
+    if ((given.initial_velocity_ms ?? 0) < 0) errors.push('Uphill launches leave the top of this finite ramp; use a downhill initial velocity or a sandbox scene.')
+    if (given.body_motion === 'rolling' && given.body_shape === null) errors.push('A rolling incline requires body_shape (sphere, disc or hoop).')
+  }
+  // Keep textbook motion below the emergency numerical guard (60 m/s).
+  const g = given.gravity_ms2!
+  let peak2 = 0
+  if (problem_type === 'projectile') peak2 = (given.v0_ms ?? 0) ** 2 + 2 * g * (given.h0_m ?? 0)
+  if (problem_type === 'inclined_plane') peak2 = (given.initial_velocity_ms ?? 0) ** 2 + 2 * g * (given.ramp_length_m ?? 0)
+  if (problem_type === 'pendulum') peak2 = 2 * g * (given.length_m ?? 0) * (1 - Math.cos((given.theta0_deg ?? 0) * Math.PI / 180))
+  if (peak2 >= MAX_UNFORCED_SPEED_MS ** 2) errors.push(`These givens exceed the supported simulation energy range (peak speed must stay below ${MAX_UNFORCED_SPEED_MS} m/s). Reduce the speed, height or length.`)
+  let frequency = 0
+  if (problem_type === 'circular_motion' && given.radius_m) frequency = (given.v0_ms ?? 0) / given.radius_m
+  if (problem_type === 'charged_particle_magnetic' && given.mass_kg) frequency = Math.abs((given.charge_c ?? 0) * (given.b_field_tesla ?? 0) / given.mass_kg)
+  if (problem_type === 'pendulum' && given.length_m) frequency = Math.sqrt(g / given.length_m)
+  if (frequency > MAX_ORBIT_FREQUENCY_RADS) errors.push(`This motion is too fast for the 120 Hz solver (${frequency.toFixed(2)} rad/s; maximum ${MAX_ORBIT_FREQUENCY_RADS}). Increase the radius, length or mass, or reduce the speed or magnetic field.`)
 
   // --- required fields for this type --------------------------------------
   if (typeof problem_type === 'string' && (PROBLEM_TYPES as readonly string[]).includes(problem_type)) {
@@ -281,6 +308,6 @@ export function validateSpec(raw: unknown): ValidationResult {
     },
     repairs,
     errors,
-    needsConfirmation: confidence < CONFIDENCE_FLOOR,
+    needsConfirmation: confidence < CONFIDENCE_FLOOR || repairs.length > 0,
   }
 }

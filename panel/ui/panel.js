@@ -67,7 +67,8 @@ async function post(path, body) {
   try {
     const res = await fetch(path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...(path === '/api/system/shutdown' ? { 'X-Panel-Token': (await (await fetch('/api/session', { signal: AbortSignal.timeout(4000) })).json()).token } : {}) },
+      signal: AbortSignal.timeout(8000),
       body: JSON.stringify(body ?? {}),
     });
     const data = await res.json().catch(() => ({}));
@@ -601,7 +602,7 @@ els.shutdownBtn.addEventListener('pointerleave', holdEnd);
 
 // --- boot ------------------------------------------------------------------
 
-fetch('/api/state')
+fetch('/api/state', { signal: AbortSignal.timeout(8000) })
   .then((r) => r.json())
   .then(render)
   .catch(() => setLink(false))

@@ -68,7 +68,7 @@ export class Timeline {
     this.cursor = null
   }
 
-  record(step: number, t_s: number, bodies: Record<string, BodyFrame>): void {
+  record(step: number, t_s: number, bodies: Record<string, BodyFrame>, force = false): void {
     if (this.cursor !== null) return // never record while parked in the past
     // requestAnimationFrame is not a physics clock. At slow playback speeds it
     // can render several times before the next fixed step, so don't turn one
@@ -79,7 +79,7 @@ export class Timeline {
     // only sees the step count at frame boundaries, and one odd-sized first
     // frame (a 25 ms frame after a mode switch is three steps) would leave
     // every later count odd and record nothing for the rest of the run.
-    if (last && step - last.step < STRIDE) return
+    if (!force && last && step - last.step < STRIDE) return
 
     this.frames.push({ step, t_s, bodies })
     if (this.frames.length > this.capacity) this.frames.shift()

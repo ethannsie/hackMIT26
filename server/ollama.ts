@@ -6,7 +6,7 @@
  * nemotron-3.5-lightning reasons by default. Measured on the GX10 for a
  * schema-constrained problem: 31 s with thinking (6,850 characters of it),
  * 5.5 s without. At a demo table the second one is the only usable one, and
- * the consistency check in generate keeps the quality honest.
+ * generated statements are rendered from validated givens.
  */
 
 export interface ChatMessage {

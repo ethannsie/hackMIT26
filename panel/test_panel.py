@@ -49,7 +49,7 @@ def check(name: str, ok: bool, detail: object = "") -> None:
 
 def req(path: str, body: dict | None = None, raw: bool = False):
     data = json.dumps(body).encode() if body is not None else None
-    headers = {"content-type": "application/json"} if data else {}
+    headers = {"X-Panel-Token": ps.SESSION_TOKEN, "content-type": "application/json"} if data else {}
     request = urllib.request.Request(BASE + path, data=data, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=5) as resp:
@@ -64,6 +64,7 @@ def main() -> int:
     # put and stands in for a webcam.
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     frame[:, :, 1] = 90
+    ps.camera._frame_at = time.monotonic()
     ps.camera._frame = frame
     ps.camera._frame_seq = 1
     ps.camera._camera_ok = True
@@ -161,10 +162,12 @@ def main() -> int:
     thread = threading.Thread(target=read_sse, daemon=True)
     thread.start()
     time.sleep(0.6)
+    ps.camera._frame_at = time.monotonic()
     req("/api/scan/capture", {})
     thread.join(timeout=4)
     check("SSE delivers scan:captured", seen.get("captured") is True)
 
+    ps.camera._frame_at = time.monotonic()
     print("\n[mjpeg]")
     with urllib.request.urlopen(BASE + "/stream/raw.mjpg", timeout=5) as r:
         head = r.read(600)

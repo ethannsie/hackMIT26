@@ -1,3 +1,4 @@
+import { request } from '../../net/request.ts'
 import { RemoteHandSource } from '../../hand/remote.ts'
 import { RopeArt } from './art.ts'
 import { RopeBlade } from './interaction.ts'
@@ -143,7 +144,7 @@ export class RopeGame {
     }
     if (now - this.lastReport > 1000 && !this.reportInFlight) {
       this.lastReport = now; this.reportInFlight = true
-      void fetch(`${this.base}/api/rope/status`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      void request(`${this.base}/api/rope/status`, { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ outcome: this.world.outcome, stars: this.world.stars, cuts: this.world.cuts, tracked: this.tracked, level: this.world.level.id, levelCount: LEVELS.length,
           ropes: this.world.ropes.map((rope, index) => ({ index, cut: rope.cut })),
           levels: LEVELS.map((level, index) => ({ id: level.id, name: level.name, hint: level.hint, best: this.progress.best[index] })),

@@ -20,10 +20,11 @@ import {
   pxToM,
   matterVelToMs,
   matterAngVelToRads,
+  radsToMatterAngVel,
   RAD,
 } from './units.ts'
 import { buildScene, addToWorld, type BuiltScene, type ViewBox } from './builders.ts'
-import { containBody, clampBodyCentre, type PxBox } from './contain.ts'
+import { containBody, clampBodyCentre, halfExtents, MAX_SPEED_MS, type PxBox } from './contain.ts'
 import { installCorrections, type Corrections } from './corrections.ts'
 import { toParams, type SimParams } from './params.ts'
 import { solveAsked, type Solution } from './analytic.ts'
@@ -58,6 +59,9 @@ export interface BodyState {
   angle_deg: number
   angular_velocity_rads: number
   mass_kg: number
+  inertia_kgm2: number
+  /** Geometric contact state, for the live force diagram. */
+  contact: 'ground' | 'ramp' | null
   kinetic_energy_j: number
   potential_energy_j: number
 }
@@ -139,6 +143,7 @@ export class SimWorld {
 
   /** Bodies that have left the world and been parked. */
   readonly escaped = new Set<string>()
+  readonly speedLimited = new Set<string>()
 
   /**
    * Catch anything that leaves the world.
@@ -200,7 +205,10 @@ export class SimWorld {
   /** Put anything that got out (tunnelled, dragged, blew up) back inside. */
   private containBodies(): void {
     const box = this.containBox()
-    for (const body of Object.values(this.scene.byId)) containBody(body, box)
+    for (const [id, body] of Object.entries(this.scene.byId)) {
+      if (!body.isStatic && matterVelToMs(Math.hypot(body.velocity.x, body.velocity.y)) > MAX_SPEED_MS) this.speedLimited.add(id)
+      containBody(body, box)
+    }
   }
 
   /**
@@ -246,7 +254,7 @@ export class SimWorld {
     Body.setPosition(body, { x: mToPx(f.x_m), y: -mToPx(f.y_m) })
     Body.setAngle(body, f.angle_deg * (Math.PI / 180))
     Body.setVelocity(body, { x: msToMatterVel(f.vx_ms), y: -msToMatterVel(f.vy_ms) })
-    Body.setAngularVelocity(body, f.omega_rads * FIXED_DT_S)
+    Body.setAngularVelocity(body, radsToMatterAngVel(f.omega_rads))
     // A scrub is an explicit jump in simulation time, not a partial render
     // delta that should be carried into the next play press.
     this.accumulatorMs = 0
@@ -270,6 +278,7 @@ export class SimWorld {
     const body = this.scene.byId[id]
     if (!body || body.isStatic) return
     Body.setVelocity(body, { x: msToMatterVel(v[0]), y: -msToMatterVel(v[1]) })
+    this.corrections.resync?.()
   }
 
   /**
@@ -284,6 +293,15 @@ export class SimWorld {
     // A grab is a teleport; clamp it so a hand cannot carry a body through a wall.
     const [x, y] = clampBodyCentre(body, mToPx(p[0]), -mToPx(p[1]), this.containBox())
     Body.setPosition(body, { x, y })
+    if (this.params.kind === 'pendulum') {
+      const pivot = this.scene.byId['pivot']!
+      const angle = Math.atan2(x - pivot.position.x, y - pivot.position.y)
+      Body.setPosition(body, {
+        x: pivot.position.x + mToPx(this.params.length_m) * Math.sin(angle),
+        y: pivot.position.y + mToPx(this.params.length_m) * Math.cos(angle),
+      })
+    }
+    this.corrections.resync?.()
   }
 
   /** Advance n fixed steps. Used by the verify script and any test. */
@@ -331,6 +349,7 @@ export class SimWorld {
   /** Rebuild from the original spec. Identical starting state, every time. */
   reset(): void {
     this.escaped.clear()
+    this.speedLimited.clear()
     this.corrections.dispose()
     Composite.clear(this.engine.world, false)
     this.scene = buildScene(this.params)
@@ -353,6 +372,17 @@ export class SimWorld {
     const vy = -matterVelToMs(body.velocity.y)
     const speed = Math.hypot(vx, vy)
     const m = body.isStatic ? 0 : body.mass
+    const inertia = Number.isFinite(body.inertia) && !body.isStatic ? body.inertia / PX_PER_M ** 2 : 0
+    const omega = matterAngVelToRads(body.angularVelocity)
+    let contact: BodyState['contact'] = null
+    if (this.scene.byId['ground'] && body.position.y + halfExtents(body)[1] >= -mToPx(0.02) && Math.abs(vy) < 0.15) contact = 'ground'
+    if (this.params.kind === 'inclined_plane') {
+      const p = this.params, th = p.angle_deg * Math.PI / 180
+      const dx = x, dy = y - p.ramp_length_m * Math.sin(th)
+      const along = dx * Math.cos(th) - dy * Math.sin(th)
+      const perp = dx * Math.sin(th) + dy * Math.cos(th)
+      if (along > -Math.max(p.ramp_length_m * 0.08, 0.08) - 0.06 && along < p.ramp_length_m + 0.06 && perp > 0 && perp < 0.065) contact = 'ramp'
+    }
 
     return {
       id,
@@ -362,7 +392,9 @@ export class SimWorld {
       angle_deg: body.angle * RAD,
       angular_velocity_rads: matterAngVelToRads(body.angularVelocity),
       mass_kg: m,
-      kinetic_energy_j: 0.5 * m * speed * speed,
+      inertia_kgm2: inertia,
+      contact,
+      kinetic_energy_j: 0.5 * m * speed * speed + 0.5 * inertia * omega * omega,
       potential_energy_j: m * this.g_ms2 * y,
     }
   }

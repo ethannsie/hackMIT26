@@ -23,7 +23,7 @@
  */
 import Matter from 'matter-js'
 import { PX_PER_M, mToPx, pxToM, msToMatterVel, matterVelToMs, FIXED_DT_S, DEG } from './units.ts'
-import type { SimParams } from './params.ts'
+import { INERTIA_COEFF, type SimParams } from './params.ts'
 import { rampExtensionPx, type BuiltScene } from './builders.ts'
 
 const { Events, Body } = Matter
@@ -108,10 +108,11 @@ function inclineFriction(
         matterVelToMs(block.velocity.x) * down.x + matterVelToMs(block.velocity.y) * down.y
 
       if (p.motion === 'rolling') {
-        // Rolling without slipping: a = (5/7) g sin(theta). Static friction does
-        // no work here, it just diverts 2/7 of the drive into rotation, so model
+        // Rolling without slipping: a = g sin(theta)/(1+k). Static friction does
+        // no work here; k/(1+k) of the drive goes into rotation, so model
         // it as a constant retarding force rather than as Coulomb friction.
-        const retard = (2 / 7) * gravityAlong
+        const k = INERTIA_COEFF[p.shape]
+        const retard = (k / (1 + k)) * gravityAlong
         Body.applyForce(block, block.position, {
           x: -down.x * retard * FORCE_N_TO_MATTER,
           y: -down.y * retard * FORCE_N_TO_MATTER,

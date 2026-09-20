@@ -110,21 +110,30 @@ function extractionRequest(image: string) {
   }
 }
 
-/** Try the on-device GX10 first, but never wait on it past the timeout. */
-async function tryLocal(image: string): Promise<unknown | null> {
-  if (!local) return null
+/**
+ * Try the on-device GX10 first, but never wait on it past the timeout.
+ *
+ * Returns the parsed spec, or the reason it could not: on the all-local demo
+ * there is no hosted fallback, and "set OPENAI_API_KEY" is the wrong thing to
+ * tell an operator whose real problem is that Ollama is down or the model is
+ * still loading.
+ */
+async function tryLocal(image: string): Promise<{ raw: unknown } | { error: string }> {
+  if (!local) return { error: 'no local endpoint configured (EXTRACT_LOCAL_URL)' }
   try {
     const completion = await local.chat.completions.create(
       { model: LOCAL_MODEL, ...extractionRequest(image) },
       { timeout: LOCAL_TIMEOUT_MS, maxRetries: 0 },
     )
     const text = completion.choices[0]?.message?.content
-    return text ? (JSON.parse(text) as unknown) : null
+    if (!text) return { error: `${LOCAL_MODEL} returned an empty response` }
+    return { raw: JSON.parse(text) as unknown }
   } catch (err) {
     // Timeout, refused, model not loaded, malformed JSON: fall through to the
     // hosted API. Log it so a silently-dead GX10 is visible in the api pane.
-    console.warn(`local extraction failed, falling back: ${(err as Error).message}`)
-    return null
+    const message = `${LOCAL_MODEL} at ${LOCAL_URL}: ${(err as Error).message}`
+    console.warn(`local extraction failed, falling back: ${message}`)
+    return { error: message }
   }
 }
 
@@ -138,13 +147,18 @@ app.post('/api/extract', async (req, res) => {
   }
 
   let source: 'local' | 'openai' = 'local'
-  let raw = await tryLocal(image)
+  const attempt = await tryLocal(image)
+  let raw: unknown = 'raw' in attempt ? attempt.raw : null
 
-  if (raw === null) {
+  if (!('raw' in attempt)) {
     source = 'openai'
     if (!openai) {
+      // Name the backend that actually failed. Only mention the hosted key
+      // when hosted extraction was ever the plan (a local endpoint is set).
       res.status(503).json({
-        error: 'No extraction backend available. Set OPENAI_API_KEY in .env (see .env.example).',
+        error: local
+          ? `local extraction failed — ${attempt.error}. No OPENAI_API_KEY to fall back to.`
+          : 'No extraction backend configured. Set EXTRACT_LOCAL_URL (GX10 Ollama) or OPENAI_API_KEY in .env (see .env.example).',
       })
       return
     }

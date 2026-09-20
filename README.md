@@ -48,9 +48,8 @@ npm run check             # typecheck
 Open `#sandbox` in the URL to go straight into sandbox mode. Press `?` in the
 app for keyboard shortcuts.
 
-**Run `npm run verify:all` before every push.** 41 + 16 checks, worst case
-0.58%. It is the only thing standing between us and demoing wrong physics to a
-judge — it has already caught a pendulum that silently decayed, a magnetic orbit
+**Run `npm run verify:all` before every push.** It is the only thing standing
+between us and demoing wrong physics to a judge — it has already caught a pendulum that silently decayed, a magnetic orbit
 that gained 2175% speed, and bodies falling off the end of the floor.
 
 The GX10 local extraction path needs no OpenAI key. If extraction is unavailable,
@@ -210,7 +209,7 @@ lying. It is sufficient for the initial demo; a three.js scene is not required.
 ## Third-party
 
 Disclosed per the HackMIT honour code (plan §17):
-matter-js 0.20, three 0.169, katex 0.16, openai 4.73, vite 5.4, express 4.21.
+matter-js 0.20, katex 0.16, openai 4.73, vite 5.4, express 4.21.
 Approach follows LivePhys (arXiv:2607.20990) for the scan-to-spec stage.
 
 ## Standalone webcam demo
@@ -227,7 +226,8 @@ python3 hand_physics_demo.py            # --preview for the OpenCV window
 ```
 
 With the web app open it posts poses to `/api/hand/frame` and the browser
-(`?hand=python`) drives the sim from them; without it the browser keeps the
-mouse (`?hand=mouse` forces it). It holds a grab through a 0.22 s tracker
+picks them up automatically (after the panel camera, before the mouse);
+without it the browser keeps the mouse, and `?hand=mouse` ignores every
+tracker. It holds a grab through a 0.22 s tracker
 dropout and needs six open frames to release — constants at the top of the
 file. `depth_at_cursor_mm()` is an empty adapter left for a depth sensor.

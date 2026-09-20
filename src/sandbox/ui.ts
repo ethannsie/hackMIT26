@@ -40,6 +40,10 @@ export class SandboxMode {
 
   /** Drag state. Editing when paused, throwing when running. */
   private dragging: { id: string; throwing: boolean } | null = null
+  /** Where a thrown body is being held, in scene metres, re-applied every step. */
+  private dragAt: [number, number] | null = null
+  /** Whether the clock was running at the last frame, so a mousedown knows. */
+  private running = false
   private lastDrag: { x: number; y: number; t: number } | null = null
   private panning: { x: number; y: number } | null = null
   private dragVelocity: [number, number] = [0, 0]
@@ -267,20 +271,24 @@ export class SandboxMode {
       this.requestPause(blocked)
     }
 
+    this.running = running
     let couplingState = this.handCoupling.update(this.world, hand)
-    if (running && !this.dragging) {
+    if (running) {
       this.world.advanceWith(elapsedMs, () => {
         couplingState = this.handCoupling.update(this.world, hand)
+        this.holdDragged()
         return couplingState.force ? [couplingState.force] : []
       })
       // Matter integrates after the coupling callback. Reapply the held
       // position after the batch so gravity cannot pull a grabbed body away.
       if (couplingState.contact) couplingState = this.handCoupling.update(this.world, hand)
+      this.holdDragged()
     }
     this.view.draw(this.world, this.selectedId, this.armed, this.cursor, {
       paths: this.lastPaths,
       forces: this.showForces ? this.forcesOnSelection() : [],
       hand,
+      fisted: this.handCoupling.fisted,
       isolated: this.isolatedIds(),
       // Predicted paths only while the scene sits at its authored start; once
       // it runs, the traced paths take over.
@@ -298,6 +306,17 @@ export class SandboxMode {
   /** Paths supplied by the caller each frame, so the timeline stays in one place. */
   lastPaths: Record<string, { x: number; y: number }[]> = {}
   showForces = true
+
+  /**
+   * A body grabbed with the mouse while the scene runs is a position
+   * constraint, exactly like a pinched hand: it sits at the cursor while
+   * everything else keeps moving, and gets the drag velocity on release.
+   */
+  private holdDragged(): void {
+    if (!this.dragging?.throwing || !this.dragAt) return
+    this.world.setPositionM(this.dragging.id, this.dragAt)
+    this.world.setVelocityMs(this.dragging.id, [0, 0])
+  }
 
   // --- interaction --------------------------------------------------------
 
@@ -326,8 +345,11 @@ export class SandboxMode {
 
     if (hit && !isStaticKind(hit.kind)) {
       // Running: this is a grab, and releasing throws. Paused: this moves the
-      // component's authored position.
-      this.dragging = { id: hit.id, throwing: this.world.steps > 0 }
+      // component's authored position. Decided by the clock, not by whether
+      // a step has happened yet — a drag on the first running frame used to
+      // count as an edit and rebuild the scene on every mouse move.
+      this.dragging = { id: hit.id, throwing: this.running }
+      this.dragAt = this.running ? at : null
       this.lastDrag = { x: at[0], y: at[1], t: performance.now() }
       this.dragVelocity = [0, 0]
     } else if (hit) {
@@ -356,7 +378,9 @@ export class SandboxMode {
     }
 
     if (this.dragging.throwing) {
-      // Move the live body; the authored scene is left alone.
+      // Move the live body; the authored scene is left alone. Held again
+      // every physics step (holdDragged) so the world can keep running.
+      this.dragAt = at
       this.world.setPositionM(this.dragging.id, at)
       this.world.setVelocityMs(this.dragging.id, [0, 0])
     } else {
@@ -379,6 +403,7 @@ export class SandboxMode {
       if (speed > 0.1) this.setStatus(`released at ${speed.toFixed(2)} m/s`)
     }
     this.dragging = null
+    this.dragAt = null
     this.lastDrag = null
   }
 

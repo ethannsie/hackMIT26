@@ -11,6 +11,13 @@
 set -euo pipefail
 
 URL="${PANEL_URL:-http://localhost:8770}"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Snap Chromium silently ignores a --user-data-dir under ~/.config (hidden
+# top-level dirs are outside its home interface) and joins its default
+# profile instead, which lands the window on the wrong screen. Same visible
+# location gx10/demo.sh uses.
+PROFILE="${PANEL_PROFILE:-$REPO/.demo/profile-panel}"
+mkdir -p "$PROFILE"
 
 pick_monitor() {
   # xrandr --listmonitors lines look like:
@@ -58,4 +65,4 @@ exec "$BROWSER" \
   --disable-session-crashed-bubble \
   --disable-pinch \
   --overscroll-history-navigation=0 \
-  --user-data-dir="${HOME}/.config/hackmit-panel"
+  --user-data-dir="$PROFILE"

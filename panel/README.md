@@ -142,6 +142,7 @@ reloaded panel comes back mid-scan exactly where it was.
 | env | default | |
 |---|---|---|
 | `PANEL_PORT` | `8770` | |
+| `PANEL_BIND` | `127.0.0.1` | loopback only. The app, kiosk page and `demo.sh` all run on this box, and the API includes an unauthenticated shutdown; `0.0.0.0` puts that on the venue Wi-Fi |
 | `PANEL_CAMERA_INDEX` | `0` | the USB webcam |
 | `PANEL_CAMERA_WIDTH` / `_HEIGHT` | `1280` / `720` | |
 | `PANEL_CAMERA_FOURCC` / `_FPS` | `MJPG` / `30` | OpenCV's default raw YUYV caps a USB 2 webcam at ~10 fps at 720p; MJPEG runs at the C270's full 30 |

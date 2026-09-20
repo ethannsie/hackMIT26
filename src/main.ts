@@ -20,7 +20,7 @@ import { extractFromImage } from './extract/client.ts'
 import { PRESETS, KNOBS } from './presets.ts'
 import { SandboxMode } from './sandbox/ui.ts'
 import { History } from './history.ts'
-import { Timeline } from './render/timeline.ts'
+import { Timeline, type BodyFrame } from './render/timeline.ts'
 import { forcesFor } from './sim/fbd.ts'
 import type { DrawOptions } from './render/canvas.ts'
 import type { Sample } from './render/charts.ts'
@@ -105,8 +105,8 @@ let speed = 1
  * restored run too.
  */
 type Snap =
-  | { kind: 'problem'; spec: ProblemSpec; repairs: string[]; steps: number; samples: Sample[]; tracked: string | null }
-  | { kind: 'sandbox'; scene: SandboxScene; steps: number; samples: Sample[]; tracked: string | null }
+  | { kind: 'problem'; spec: ProblemSpec; repairs: string[]; steps: number; bodies: Record<string, BodyFrame>; samples: Sample[]; tracked: string | null }
+  | { kind: 'sandbox'; scene: SandboxScene; steps: number; bodies: Record<string, BodyFrame>; samples: Sample[]; tracked: string | null }
 
 const rollback = new History<Snap>()
 const timeline = new Timeline()
@@ -119,10 +119,11 @@ let showForces = true
 function remember(label: string): void {
   const samples = recorder.snapshot()
   const tracked = recorder.tracked
+  const bodies = captureBodies()
   if (mode === 'sandbox') {
-    rollback.push(label, { kind: 'sandbox', scene: sandbox.snapshotScene(), steps: sandbox.steps, samples, tracked }, sandbox.simTime)
+    rollback.push(label, { kind: 'sandbox', scene: sandbox.snapshotScene(), steps: sandbox.steps, bodies, samples, tracked }, sandbox.simTime)
   } else {
-    rollback.push(label, { kind: 'problem', spec, repairs: [...repairs], steps: world.steps, samples, tracked }, world.time_s)
+    rollback.push(label, { kind: 'problem', spec, repairs: [...repairs], steps: world.steps, bodies, samples, tracked }, world.time_s)
   }
   refreshHistoryUi()
 }
@@ -132,14 +133,23 @@ function restore(snap: Snap): void {
   if (snap.kind === 'sandbox') {
     if (mode !== 'sandbox') setMode('sandbox')
     sandbox.restoreScene(snap.scene, snap.steps)
+    // The replay puts the world's own state (contacts, integrators) where it
+    // was; the recorded bodies then correct for anything the hand did, which
+    // the replay cannot know about.
+    sandbox.applyFrame(snap.bodies, snap.steps)
   } else {
     if (mode !== 'problem') setMode('problem')
     world.dispose()
     spec = snap.spec
     repairs = [...snap.repairs]
     world = new SimWorld(spec)
-    // Deterministic replay: the same spec and step count is the same state.
+    // Replay from the spec for the engine's internal state, then place the
+    // bodies exactly where they were — a run that was pushed or thrown is not
+    // reproducible from the spec and step count alone.
     world.stepMany(Math.min(snap.steps, 20_000))
+    for (const [id, f] of Object.entries(snap.bodies)) world.applyBodyState(id, f)
+    world.steps = snap.steps
+    world.resyncCorrections()
     typeEl.value = spec.problem_type
     buildKnobs()
     refreshDerivation()
@@ -162,10 +172,11 @@ function refreshHistoryUi(): void {
   historyEl.value = ''
 }
 
-const mouseHand = new MockHandSource({
-  element: canvas,
-  metresPerPixel: 1 / view.pixelsPerMetre,
-})
+/** Screen → scene for whichever view is live; every hand source maps through it. */
+const screenToScene = (clientX: number, clientY: number): [number, number] =>
+  mode === 'sandbox' ? sandbox.handPoint(clientX, clientY) : view.toScene(clientX, clientY)
+
+const mouseHand = new MockHandSource({ element: canvas, toScene: screenToScene })
 
 /**
  * Real hand tracking, when the control panel is running on the demo box.
@@ -176,9 +187,6 @@ const mouseHand = new MockHandSource({
  * instant the camera stops producing. A laptop with no panel behaves exactly
  * as it did before.
  */
-/** Screen → scene for whichever view is live; both trackers map through it. */
-const screenToScene = (clientX: number, clientY: number): [number, number] =>
-  mode === 'sandbox' ? sandbox.handPoint(clientX, clientY) : view.toScene(clientX, clientY)
 
 const panelHand = new RemoteHandSource({
   base: `http://${window.location.hostname}:8770`,
@@ -189,7 +197,7 @@ const panelHand = new RemoteHandSource({
 })
 
 /** The standalone tracker (`hand_physics_demo.py`) posting through the :8787 bridge. */
-const bridgeHand = new HttpHandSource(canvas, screenToScene)
+const bridgeHand = new HttpHandSource(canvas, screenToScene, () => panelHand.live)
 
 /** `?hand=mouse` ignores every tracker, for testing on a laptop with no camera. */
 const forceMouse = new URLSearchParams(window.location.search).get('hand') === 'mouse'
@@ -411,29 +419,33 @@ function setMode(next: Mode): void {
 
 // --- graphs ----------------------------------------------------------------
 
-/** Snapshot every body this step, for scrubbing and path tracing. */
-function recordFrame(): void {
+/** Every movable body's state right now, in the timeline's shape. */
+function captureBodies(): Record<string, BodyFrame> {
+  const bodies: Record<string, BodyFrame> = {}
   if (mode === 'sandbox') {
-    const bodies: Record<string, import('./render/timeline.ts').BodyFrame> = {}
     for (const b of sandbox.bodyStates()) {
       bodies[b.id] = {
         x_m: b.position_m[0], y_m: b.position_m[1], angle_deg: b.angle_deg,
         vx_ms: b.velocity_ms[0], vy_ms: b.velocity_ms[1], omega_rads: 0,
       }
     }
-    timeline.record(sandbox.steps, sandbox.simTime, bodies)
-    return
+    return bodies
   }
-  const st = world.state()
-  const bodies: Record<string, import('./render/timeline.ts').BodyFrame> = {}
-  for (const [id, b] of Object.entries(st.bodies)) {
+  for (const [id, b] of Object.entries(world.state().bodies)) {
     if (b.mass_kg <= 0) continue // static scenery never moves
     bodies[id] = {
       x_m: b.position_m[0], y_m: b.position_m[1], angle_deg: b.angle_deg,
       vx_ms: b.velocity_ms[0], vy_ms: b.velocity_ms[1], omega_rads: b.angular_velocity_rads,
     }
   }
-  timeline.record(world.steps, st.time_s, bodies)
+  return bodies
+}
+
+/** Snapshot every body this step, for scrubbing and path tracing. */
+function recordFrame(): void {
+  const bodies = captureBodies()
+  if (mode === 'sandbox') timeline.record(sandbox.steps, sandbox.simTime, bodies)
+  else timeline.record(world.steps, world.time_s, bodies)
 }
 
 /** Put the live bodies where a recorded frame says they were. */
@@ -708,6 +720,8 @@ window.addEventListener('keydown', (e) => {
 // --- loop ------------------------------------------------------------------
 
 let lastMs = performance.now()
+/** Escapees already announced, so the warning fires on change only. */
+let reportedEscape = ''
 let lastCoupling: CouplingState = {
   contact: false,
   penetration_m: 0,
@@ -769,12 +783,17 @@ function frame(nowMs: number): void {
       forces: showForces && activeState ? forcesFor(world.params, activeState) : [],
       showForces,
       hand: liveHand,
+      fisted: coupling.fisted,
     }
     view.draw(world, st, lastCoupling, opts)
 
-    if (world.escaped.size > 0) {
-      setStatus(`${[...world.escaped].join(', ')} left the scene and was parked`, 'warn')
+    // Report once per set of escapees, not every frame — a status line that
+    // is rewritten sixty times a second buries everything else it could say.
+    const escaped = [...world.escaped].join(', ')
+    if (escaped && escaped !== reportedEscape) {
+      setStatus(`${escaped} left the scene and was parked`, 'warn')
     }
+    reportedEscape = escaped
   }
 
   refreshScrubber()

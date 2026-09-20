@@ -150,7 +150,7 @@ function incline(p: Extract<SimParams, { kind: 'inclined_plane' }>): Solution[] 
       steps: [
         {
           label: 'Constant acceleration over the ramp length',
-          latex: 'L = v_0 t + \\tfrac{1}{2}at^2 \;\\Rightarrow\; t = \\frac{-v_0 + \\sqrt{v_0^2 + 2aL}}{a}',
+          latex: 'L = v_0 t + \\tfrac{1}{2}at^2 \\;\\Rightarrow\\; t = \\frac{-v_0 + \\sqrt{v_0^2 + 2aL}}{a}',
           substituted: `t = \\frac{-${n(v0)} + \\sqrt{${n(v0 * v0)} + 2(${n(a)})(${n(L)})}}{${n(a)}} = ${n(t)}\\ \\text{s}`,
         },
       ],
@@ -180,6 +180,7 @@ function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): Solution[] {
   // Small-angle prediction vs the exact energy result. The gap IS the lesson.
   const vMaxSmall = omega * L * Math.abs(th0)
   const vMaxExact = Math.sqrt(2 * g * L * (1 - Math.cos(th0)))
+  const tMax = m * g * (3 - 2 * Math.cos(th0))
   const errPct = vMaxExact === 0 ? 0 : ((vMaxSmall - vMaxExact) / vMaxExact) * 100
 
   return [
@@ -228,6 +229,19 @@ function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): Solution[] {
             caveat: `At ${n(theta0_deg)}° the small-angle approximation overpredicts peak speed by ${n(errPct, 1)}%. Below about 15° the two agree to under 1%.`,
           }
         : {}),
+    },
+    {
+      quantity: 'tension_n',
+      value: tMax,
+      unit: 'N',
+      steps: [
+        {
+          label: 'Rod tension at the bottom of the swing, where it is largest',
+          latex: 'T_{max} = mg + \\frac{m v_{max}^2}{L} = mg(3 - 2\\cos\\theta_0)',
+          substituted: `T_{max} = (${n(m)})(${n(g)})(3 - 2\\cos ${n(theta0_deg)}^\\circ) = ${n(tMax)}\\ \\text{N}`,
+        },
+      ],
+      caveat: 'At the top of the swing the tension drops to mg cos θ₀ — the rod pulls hardest exactly when the bob is moving fastest, because it has to supply the centripetal force as well as hold the weight.',
     },
   ]
 }

@@ -22,6 +22,7 @@
 import type Matter from 'matter-js'
 import type { AppliedForce } from '../sim/world.ts'
 import { matterVelToMs, pxToM } from '../sim/units.ts'
+import { halfExtents } from '../sim/contain.ts'
 import { FIST_CLOSE, FIST_OPEN, PINCH_GRAB, PINCH_RELEASE, type HandFrame } from './types.ts'
 
 /** Newtons per m/s of fist speed. A 1 m/s punch on a 1 kg body is a firm shove. */
@@ -95,7 +96,12 @@ const IDLE: CouplingState = {
 export class HandCoupling {
   private grabbedId: string | null = null
   /** Fist latch with hysteresis, so a push does not stutter at the threshold. */
-  private fisted = false
+  private fistLatched = false
+
+  /** The latched fist state, so the overlay draws what the coupling is doing. */
+  get fisted(): boolean {
+    return this.fistLatched
+  }
 
   /**
    * Work out what this hand is doing to the sim this step.
@@ -107,7 +113,7 @@ export class HandCoupling {
   update(world: CouplableWorld, hand: HandFrame | null): CouplingState {
     if (!hand) {
       this.grabbedId = null
-      this.fisted = false
+      this.fistLatched = false
       return IDLE
     }
 
@@ -150,12 +156,12 @@ export class HandCoupling {
 
     // --- push: only a closed fist pushes ------------------------------------
     const fist = hand.fist ?? 0
-    if (this.fisted) {
-      if (fist < FIST_OPEN) this.fisted = false
+    if (this.fistLatched) {
+      if (fist < FIST_OPEN) this.fistLatched = false
     } else if (fist >= FIST_CLOSE) {
-      this.fisted = true
+      this.fistLatched = true
     }
-    if (!this.fisted) return IDLE // open hand: free-look, disturbs nothing
+    if (!this.fistLatched) return IDLE // open hand: free-look, disturbs nothing
 
     const glow = Math.max(0, -hand.palm_m.z)
     const target = this.nearestInteractable(world, hand.palm_m.x, hand.palm_m.y, fistReachM(hand))
@@ -203,10 +209,11 @@ export class HandCoupling {
     const normal: [number, number] = distance > 1e-6
       ? [dx / distance, dy / distance]
       : [1, 0]
-    const bodyRadius = Math.max(
-      pxToM(body.bounds.max.x - body.bounds.min.x),
-      pxToM(body.bounds.max.y - body.bounds.min.y),
-    ) * 0.5
+    // Shape extents, not `body.bounds`: Matter inflates bounds by the current
+    // velocity for its broad phase, which made a fast ball's fist hitbox up to
+    // twice its size. Same rule contain.ts follows.
+    const [hw, hh] = halfExtents(body)
+    const bodyRadius = pxToM(Math.max(hw, hh))
     const contactRadius = palmRadiusM(hand) + bodyRadius
     const overlap = contactRadius - distance
     if (overlap <= 0) return

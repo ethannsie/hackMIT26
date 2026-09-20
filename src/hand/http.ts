@@ -10,6 +10,9 @@ interface RemoteHandFrame {
   landmarks?: { x: number; y: number; z: number }[]
 }
 
+/** How long to leave the API alone after a failed poll. */
+const BACKOFF_MS = 1000
+
 /** Receives the Python webcam tracker's latest frame through the local API. */
 export class HttpHandSource implements HandSource {
   private frame: HandFrame | null = null
@@ -18,10 +21,19 @@ export class HttpHandSource implements HandSource {
   private requestInFlight = false
   private lastReceived = 0
   private lastCurrent = performance.now()
+  /** Do not poll again before this; set after a failed request. */
+  private retryAt = 0
 
   constructor(
     private readonly element: HTMLElement,
     private readonly toScene: (clientX: number, clientY: number) => [number, number],
+    /**
+     * When this says a better source is live, the bridge is not polled at all.
+     * The bridge is a laptop-era fallback; on the demo box the panel camera
+     * is the tracker, and 60 requests a second to an API that has nothing to
+     * say is pure noise in the network log.
+     */
+    private readonly yieldTo: () => boolean = () => false,
   ) {}
 
   async start(): Promise<void> {
@@ -64,11 +76,14 @@ export class HttpHandSource implements HandSource {
   }
 
   private async poll(): Promise<void> {
-    if (this.requestInFlight) return
+    if (this.requestInFlight || this.yieldTo() || performance.now() < this.retryAt) return
     this.requestInFlight = true
     try {
       const response = await fetch('/api/hand/frame', { cache: 'no-store' })
-      if (!response.ok) return
+      if (!response.ok) {
+        this.retryAt = performance.now() + BACKOFF_MS
+        return
+      }
       const remote = (await response.json()) as RemoteHandFrame | null
       if (!remote) return
       const rect = this.element.getBoundingClientRect()
@@ -109,7 +124,9 @@ export class HttpHandSource implements HandSource {
       }
       this.lastReceived = performance.now()
     } catch {
-      // The browser can continue with mouse control while the bridge is offline.
+      // The browser can continue with mouse control while the bridge is
+      // offline; ask again in a second rather than sixty times a second.
+      this.retryAt = performance.now() + BACKOFF_MS
     } finally {
       this.requestInFlight = false
     }

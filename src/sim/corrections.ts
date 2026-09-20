@@ -24,7 +24,7 @@
 import Matter from 'matter-js'
 import { PX_PER_M, mToPx, pxToM, msToMatterVel, matterVelToMs, FIXED_DT_S, DEG } from './units.ts'
 import type { SimParams } from './params.ts'
-import type { BuiltScene } from './builders.ts'
+import { rampExtensionPx, type BuiltScene } from './builders.ts'
 
 const { Events, Body } = Matter
 
@@ -64,6 +64,7 @@ function inclineFriction(
   // Same ramp geometry the builder used: top of the slope at the origin's
   // height, running down and to the right. Matter is y-down.
   const L = mToPx(p.ramp_length_m)
+  const extra = rampExtensionPx(L)
   const top = { x: 0, y: -L * sin }
   const down = { x: cos, y: sin }
   const normal = { x: sin, y: -cos }
@@ -89,7 +90,7 @@ function inclineFriction(
     const perp = dx * normal.x + dy * normal.y
     // And how far along the ramp we are, so a body past either end is not "on" it.
     const along = dx * down.x + dy * down.y
-    return perp > 0 && perp < contactTol && along > -contactTol && along < L + contactTol
+    return perp > 0 && perp < contactTol && along > -extra - contactTol && along < L + contactTol
   }
 
   // Normal force from the textbook, not from the contact solver: N = mg cos(theta).

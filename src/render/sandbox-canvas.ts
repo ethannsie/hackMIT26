@@ -19,6 +19,8 @@ export interface SandboxDrawOptions {
   paths: Record<string, { x: number; y: number }[]>
   forces: ForceVector[]
   hand: HandFrame | null
+  /** The coupling's latched fist, so the avatar matches what is pushing. */
+  fisted?: boolean
   /** Components that meet nothing in the dry run; drawn flagged. */
   isolated?: string[]
   /** Predicted paths from the dry run, shown while the scene is at rest. */
@@ -497,7 +499,7 @@ export class SandboxView {
     drawHandOverlay(ctx, opts.hand, (point) => [
       this.sx(mToPx(point.x)),
       this.sy(-mToPx(point.y)),
-    ])
+    ], opts.fisted)
 
     ctx.fillStyle = COLORS.text
     ctx.font = '12px ui-monospace, monospace'

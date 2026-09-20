@@ -73,6 +73,13 @@ function analyse(scene: SandboxScene): {
     momentum.push('the ground pushes up on whatever lands on it')
     angular.push('the ground exerts an external torque')
   }
+  if (scene.arena?.walls) {
+    // The arena walls are bodies too: a bounce off one is an external impulse,
+    // and their restitution is below 1 (pair restitution is the max, so an
+    // elastic ball still bounces elastically — momentum is the law they break).
+    momentum.push('the arena walls push back on whatever hits them')
+    angular.push('the arena walls exert an external torque')
+  }
   if (scene.gravity_ms2 !== 0) {
     momentum.push(`gravity (${scene.gravity_ms2} m/s²) is an external force on every body`)
   }

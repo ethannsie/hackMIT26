@@ -14,6 +14,7 @@ the same box is the one combination that makes the demo drop frames.
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import subprocess
@@ -73,6 +74,89 @@ PINCH_COLOR = (90, 200, 255)
 PINCH_CLOSED = float(os.environ.get("PANEL_PINCH_CLOSED", "0.2"))
 PINCH_OPEN = float(os.environ.get("PANEL_PINCH_OPEN", "0.8"))
 
+# Fist: per finger, fingertip-to-wrist distance over knuckle-to-wrist distance.
+# Measured on the box: an extended finger reads ~1.7–1.9, a relaxed half-open
+# hand ~1.0–1.3, a real fist 0.5–0.8. The window below puts the relaxed hand
+# well under the 0.7 push threshold, so only a deliberate fist pushes. The
+# median of the four fingers is the fist value, so one bad landmark cannot
+# flip it either way.
+FIST_OPEN_RATIO = float(os.environ.get("PANEL_FIST_OPEN", "1.35"))
+FIST_CLOSED_RATIO = float(os.environ.get("PANEL_FIST_CLOSED", "0.85"))
+
+# Landmark smoothing: a One Euro filter per coordinate. min_cutoff is the
+# low-pass corner (Hz) for a hand at rest — lower = steadier but laggier;
+# beta scales the corner up with speed (px/s) so a moving hand is not delayed.
+SMOOTH = os.environ.get("PANEL_SMOOTH", "1") != "0"
+SMOOTH_MIN_CUTOFF = float(os.environ.get("PANEL_SMOOTH_MIN_CUTOFF", "1.0"))
+SMOOTH_BETA = float(os.environ.get("PANEL_SMOOTH_BETA", "0.01"))
+SMOOTH_D_CUTOFF = 1.0
+
+FINGERS = ((8, 5), (12, 9), (16, 13), (20, 17))  # (tip, knuckle) index..pinky
+
+
+class OneEuro:
+    """Casiez, Roussel & Vogel 2012. Adaptive low-pass: heavy smoothing when the
+    signal is slow (a stationary hand stops trembling), light when it is fast
+    (a moving hand does not trail). One instance per scalar."""
+
+    def __init__(self, min_cutoff: float, beta: float, d_cutoff: float) -> None:
+        self.min_cutoff, self.beta, self.d_cutoff = min_cutoff, beta, d_cutoff
+        self.x: Optional[float] = None
+        self.dx = 0.0
+        self.t: Optional[float] = None
+
+    @staticmethod
+    def _alpha(cutoff: float, dt: float) -> float:
+        tau = 1.0 / (2.0 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def __call__(self, x: float, t: float) -> float:
+        if self.x is None or self.t is None:
+            self.x, self.t = x, t
+            return x
+        dt = max(t - self.t, 1e-3)
+        self.t = t
+        dx = (x - self.x) / dt
+        self.dx += self._alpha(self.d_cutoff, dt) * (dx - self.dx)
+        cutoff = self.min_cutoff + self.beta * abs(self.dx)
+        self.x += self._alpha(cutoff, dt) * (x - self.x)
+        return self.x
+
+
+class LandmarkSmoother:
+    """One Euro on every landmark coordinate; reset the moment the hand is lost
+    so a hand re-entering elsewhere does not slide in from its old position."""
+
+    def __init__(self) -> None:
+        self.filters: list[OneEuro] = []
+
+    def reset(self) -> None:
+        self.filters = []
+
+    def __call__(self, points: np.ndarray, t: float) -> np.ndarray:
+        if not SMOOTH:
+            return points
+        n = points.shape[0] * 2
+        if len(self.filters) != n:
+            self.filters = [OneEuro(SMOOTH_MIN_CUTOFF, SMOOTH_BETA, SMOOTH_D_CUTOFF) for _ in range(n)]
+        out = np.empty_like(points)
+        flat = points.reshape(-1)
+        for i, f in enumerate(self.filters):
+            out.reshape(-1)[i] = f(float(flat[i]), t)
+        return out
+
+
+def fist_score(points: np.ndarray) -> float:
+    wrist = points[0]
+    curls = []
+    for tip, knuckle in FINGERS:
+        reach = float(np.linalg.norm(points[knuckle] - wrist))
+        if reach < 1.0:
+            continue
+        ratio = float(np.linalg.norm(points[tip] - wrist)) / reach
+        curls.append(clamp((FIST_OPEN_RATIO - ratio) / max(FIST_OPEN_RATIO - FIST_CLOSED_RATIO, 1e-3), 0.0, 1.0))
+    return float(np.median(curls)) if curls else 0.0
+
 
 def clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(value, upper))
@@ -114,6 +198,8 @@ class HandReading:
     palm_velocity_ms: tuple[float, float, float]
     pinch: float
     landmarks_m: list[tuple[float, float, float]] = field(default_factory=list)
+    # 0 = open hand, 1 = closed fist. The push gesture; see fist_score().
+    fist: float = 0.0
     # The same points as fractions of the (mirrored) camera frame, 0..1, image
     # y down. The metre frame above assumes a fixed width for the whole camera
     # view (PANEL_SCENE_WIDTH_M), which cannot match a sim that zooms to fit
@@ -134,6 +220,7 @@ class HandReading:
                 "z": self.palm_velocity_ms[2],
             },
             "pinch": self.pinch,
+            "fist": self.fist,
             "landmarks_m": [{"x": p[0], "y": p[1], "z": p[2]} for p in self.landmarks_m],
             "palm_n": {"x": self.palm_n[0], "y": self.palm_n[1]},
             "landmarks_n": [{"x": p[0], "y": p[1]} for p in self.landmarks_n],
@@ -183,6 +270,8 @@ class CameraWorker:
         self._last_palm_t = 0.0
         self._pinch_latched = False
         self._pinch_ratio = 0.0
+        self._fist = 0.0
+        self._smoother = LandmarkSmoother()
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -361,10 +450,14 @@ class CameraWorker:
                 self._reading = None
             self._last_palm_px = None
             self._pinch_latched = False
+            self._smoother.reset()
             self._banner(overlay, "no hand in view", (150, 150, 150))
             return overlay
 
         points = np.array([(lm.x * width, lm.y * height) for lm in landmarks], dtype=float)
+        # Smooth in pixel space, before anything is derived from the points, so
+        # palm, pinch, fist and velocity all see the same steady hand.
+        points = self._smoother(points, now)
         palm_px = np.median(points[list(PALM_LANDMARKS)], axis=0)
         palm_width_px = float(np.linalg.norm(points[INDEX_MCP] - points[PINKY_MCP]))
 
@@ -383,6 +476,14 @@ class CameraWorker:
         ratio = gap / span
         pinch = clamp(1.0 - (ratio - PINCH_CLOSED) / max(PINCH_OPEN - PINCH_CLOSED, 1e-3), 0.0, 1.0)
         self._pinch_ratio = ratio
+
+        # A closed fist parks the thumb against the index finger, which reads as
+        # a pinch. The fist wins: it is the push gesture, and a fist must never
+        # also grab. Threshold matches FIST_CLOSE in src/hand/types.ts.
+        fist = fist_score(points)
+        self._fist = fist
+        if fist >= 0.7:
+            pinch = 0.0
         self._pinch_latched = pinch >= 0.7 if not self._pinch_latched else pinch > 0.5
 
         handedness = "right"
@@ -394,6 +495,7 @@ class CameraWorker:
             confidence = float(top.score)
 
         reading = self._to_sim_frame(points, palm_px, palm_width_px, pinch, handedness, confidence, now, width, height)
+        reading.fist = fist
         with self._lock:
             self._reading = reading
 
@@ -471,7 +573,11 @@ class CameraWorker:
         color = PINCH_COLOR if self._pinch_latched else (200, 200, 200)
         cv2.line(frame, tuple(pts[THUMB_TIP]), tuple(pts[INDEX_TIP]), color, 2, cv2.LINE_AA)
         # The ratio is what to look at when tuning PANEL_PINCH_CLOSED/_OPEN.
-        label = f"pinch {pinch:.2f}  gap {self._pinch_ratio:.2f}" + ("  GRAB" if self._pinch_latched else "")
+        label = f"pinch {pinch:.2f}  gap {self._pinch_ratio:.2f}  fist {self._fist:.2f}"
+        if self._pinch_latched:
+            label += "  GRAB"
+        elif self._fist >= 0.7:
+            label += "  FIST"
         self._banner(frame, label, color)
 
     @staticmethod

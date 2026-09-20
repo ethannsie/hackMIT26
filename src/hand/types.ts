@@ -57,12 +57,24 @@ export interface HandFrame {
 
   /** Palm normal, unit vector. Used for the tilt-the-ramp gesture. */
   palm_normal?: Vec3
+
+  /**
+   * Fist strength, 0 = open hand, 1 = closed fist. Average curl of the four
+   * fingers. The sim treats >= FIST_CLOSE as the push gesture: only a fist
+   * pushes bodies, so an open hand moving across the scene disturbs nothing.
+   * Sources that cannot tell (older panels, the bridge) leave it undefined,
+   * which reads as 0.
+   */
+  fist?: number
 }
 
 /** Pinch at or above this counts as a grab; below PINCH_RELEASE it lets go. */
 export const PINCH_GRAB = 0.7
 /** Deliberately lower than PINCH_GRAB: hysteresis, so a held grab does not flicker. */
 export const PINCH_RELEASE = 0.5
+/** Fist at or above this pushes; below FIST_OPEN it stops. Same hysteresis idea. */
+export const FIST_CLOSE = 0.7
+export const FIST_OPEN = 0.5
 
 /**
  * Source of hand frames. Implemented by the MediaPipe pipeline in production

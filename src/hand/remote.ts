@@ -54,6 +54,7 @@ interface WireFrame {
   palm_m: WireVec
   palm_velocity_ms: WireVec
   pinch: number
+  fist?: number
   landmarks_m?: WireVec[]
   /** Fractions of the camera frame, image y down. Newer panels only. */
   palm_n?: WireVec2
@@ -101,6 +102,7 @@ export class RemoteHandSource implements HandSource {
       palm_m: vec(w.palm_m),
       palm_velocity_ms: vec(w.palm_velocity_ms),
       pinch: w.pinch,
+      fist: w.fist ?? 0,
       landmarks_m: w.landmarks_m?.map(vec),
     }
     const palm = w.palm_n ? this.mapPoint(w.palm_n) : null

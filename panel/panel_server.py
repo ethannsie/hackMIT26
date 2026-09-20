@@ -25,6 +25,11 @@ Environment:
   PANEL_SCENE_WIDTH_M   1.6    metres across the camera frame, for sim coords
   PANEL_PINCH_CLOSED    0.2    tip gap / palm width that counts as fully pinched
   PANEL_PINCH_OPEN      0.8    ... and as fully open; grab at 70 % of the way closed
+  PANEL_FIST_OPEN       1.35   fingertip/knuckle reach ratio that counts as extended
+  PANEL_FIST_CLOSED     0.85   ... and as curled; a fist (push) is 70 % curled
+  PANEL_SMOOTH          1      0 disables the One Euro landmark filter
+  PANEL_SMOOTH_MIN_CUTOFF 1.0  Hz; lower = steadier at rest, laggier
+  PANEL_SMOOTH_BETA     0.01   speed gain; higher = less lag when moving
   PANEL_CAPTURE_DIR     <repo>/captures
   PANEL_MODEL           path to hand_landmarker.task (auto-discovered otherwise)
   PANEL_SHUTDOWN_CMD    override the poweroff command (set to 'echo dry-run' to test)

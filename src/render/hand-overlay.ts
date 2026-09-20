@@ -109,6 +109,7 @@ export function drawHandOverlay(
 
   ctx.fillStyle = '#ff9ecb'
   ctx.font = '600 11px ui-monospace, monospace'
-  ctx.fillText(hand.pinch >= 0.7 ? 'PINCH' : 'HAND', palm[0] + 21, palm[1] - 10)
+  const label = hand.pinch >= 0.7 ? 'PINCH' : (hand.fist ?? 0) >= 0.7 ? 'FIST' : 'HAND'
+  ctx.fillText(label, palm[0] + 21, palm[1] - 10)
   ctx.restore()
 }

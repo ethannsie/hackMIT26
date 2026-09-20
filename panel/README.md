@@ -89,6 +89,21 @@ open, or the app is in sandbox consuming frames. The capture loop always runs;
 the landmarker is what gets switched, because a 27B vision model and a hand
 tracker on the same box is the combination that drops frames.
 
+## Gestures
+
+Two, and an open hand is neither:
+
+| | | |
+|---|---|---|
+| **pinch** | thumb tip to index tip | grabs the nearest body, carries it, throws it on release |
+| **fist** | four fingers curled | pushes: bodies bounce off the fist, and a *moving* fist adds a force along its travel. A fist held still does nothing |
+
+Earlier, any hand that looked close to the camera counted as "through the
+plane" and pushed on every movement. Now only a fist pushes, and only while
+it moves, so waving a hand across the scene disturbs nothing. Landmarks are
+One Euro filtered before any of this is computed, so a stationary hand reads
+as stationary.
+
 ## The ring light
 
 The white ring on the ESP32 lights the page while the panel is in the scan
@@ -125,6 +140,8 @@ reloaded panel comes back mid-scan exactly where it was.
 | `PANEL_CAMERA_DYNAMIC_FPS` | `0` | `1` lets the C270's auto-exposure halve the rate in dim light (it does, to 15). Needs `v4l2-ctl` (`v4l-utils`) |
 | `PANEL_SCENE_WIDTH_M` | `1.6` | metres across the frame in the legacy `palm_m` fields. The app now uses `palm_n` (fractions of the frame) mapped onto its own canvas, so this only matters to older consumers |
 | `PANEL_PINCH_CLOSED` / `_OPEN` | `0.2` / `0.8` | thumb-tip to index-tip gap as a fraction of palm width at fully pinched / fully open. The hand view shows the live `gap` to tune against; a grab is 70 % of the way from open to closed |
+| `PANEL_FIST_OPEN` / `_CLOSED` | `1.35` / `0.85` | fingertip-to-wrist over knuckle-to-wrist that counts as extended / curled (open hand ~1.8, relaxed ~1.2, fist ~0.6). Median of four fingers is `fist`; ≥ 0.7 is the push gesture and suppresses pinch. The hand view shows it live |
+| `PANEL_SMOOTH`, `_MIN_CUTOFF`, `_BETA` | `1`, `1.0`, `0.01` | One Euro filter on every landmark: a resting hand stops trembling (`MIN_CUTOFF` Hz), a moving one is not delayed (`BETA` × px/s). `0` disables |
 | `PANEL_CAPTURE_DIR` | `<repo>/captures` | |
 | `PANEL_MODEL` | auto | `hand_landmarker.task`; reuses the repo-root copy if `hand_physics_demo.py` already fetched one |
 | `PANEL_SHUTDOWN_CMD` | `sudo systemctl poweroff` | set to `echo dry-run` while testing |

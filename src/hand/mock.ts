@@ -8,7 +8,7 @@
  *
  * Controls:
  *   move          palm position on the sim plane
- *   hold button   push through the plane (palm_z goes negative)
+ *   hold button   make a fist and push through the plane (palm_z goes negative)
  *   hold shift    pinch, to grab and throw
  *
  * Shift, not space: space is the global play/pause key, and a control that both
@@ -71,6 +71,7 @@ export class MockHandSource implements HandSource {
       palm_m: { x, y, z: this.pushing ? -this.opts.pushDepth_m : 0.05 },
       palm_velocity_ms: velocity,
       pinch: this.pinching ? 1 : 0,
+      fist: this.pushing ? 1 : 0,
       palm_normal: { x: 0, y: 0, z: 1 },
     }
   }

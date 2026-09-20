@@ -25,8 +25,8 @@ export function segmentsMeet(a: Point, b: Point, c: Point, d: Point, margin = 8)
     distanceToSegment(c, a, b), distanceToSegment(d, a, b)) <= margin
 }
 
-/** Dedicated rigid-body world. Finger interaction applies forces, never teleports.
- * 240 Hz collision substeps keep the fastest allowed throw below 8 px per step.
+/** Dedicated rigid-body world. Hands only sever constraints.
+ * 240 Hz collision substeps keep the fastest allowed flight below 8 px per step.
  */
 export class RopeWorld {
   readonly engine = Engine.create({ positionIterations: 12, velocityIterations: 10 })
@@ -36,7 +36,6 @@ export class RopeWorld {
   outcome: Outcome = 'playing'
   elapsed = 0
   events: GameEvent[] = []
-  target: Point | null = null
   private accumulator = 0
 
   constructor(readonly level: RopeLevel) {
@@ -64,22 +63,9 @@ export class RopeWorld {
   set velocity(v: Point) { Body.setVelocity(this.body, { x: v.x / 60, y: v.y / 60 }) }
   get speed(): number { const v = this.velocity; return Math.hypot(v.x, v.y) / PIXELS_PER_METRE }
   get angle(): number { return this.body.angle }
-  get held(): boolean { return this.target !== null }
   get stars(): number { return this.collected.filter(Boolean).length }
   get cuts(): number { return this.ropes.filter(r => r.cut).length }
 
-  grab(point: Point): boolean {
-    if (this.outcome !== 'playing' || Math.hypot(point.x - this.candy.x, point.y - this.candy.y) > CANDY_RADIUS + 24) return false
-    this.moveTarget(point)
-    return true
-  }
-  moveTarget(point: Point): void {
-    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return
-    this.target = { x: Math.max(CANDY_RADIUS, Math.min(WIDTH - CANDY_RADIUS, point.x)),
-      y: Math.max(110, Math.min(HEIGHT - 60, point.y)) }
-  }
-  /** Release keeps actual body momentum. No camera-jitter velocity injection. */
-  release(): void { this.target = null }
   dispose(): void { Composite.clear(this.engine.world, false); Engine.clear(this.engine) }
 
   cutAll(): void {
@@ -91,7 +77,7 @@ export class RopeWorld {
     this.events.push({ kind: 'cut', at: { x: (rope.anchor.x + this.candy.x) / 2, y: (rope.anchor.y + this.candy.y) / 2 } })
   }
   swipe(from: Point, to: Point): number {
-    if (this.held || this.outcome !== 'playing' || Math.hypot(to.x - from.x, to.y - from.y) < 4) return 0
+    if (this.outcome !== 'playing' || Math.hypot(to.x - from.x, to.y - from.y) < 4) return 0
     let count = 0
     for (const rope of this.ropes) if (!rope.cut && segmentsMeet(from, to, rope.anchor, this.candy)) { this.cut(rope); count++ }
     return count
@@ -109,22 +95,6 @@ export class RopeWorld {
   private step(): void {
     this.elapsed += STEP
     const before = { ...this.candy }
-    if (this.target) {
-      const target = { ...this.target }
-      // Don't accumulate an impossible spring stretch beyond an intact rope.
-      for (const rope of this.ropes) {
-        const dx = target.x - rope.anchor.x, dy = target.y - rope.anchor.y, d = Math.hypot(dx, dy)
-        if (!rope.cut && d > rope.length) {
-          target.x = rope.anchor.x + dx / d * rope.length
-          target.y = rope.anchor.y + dy / d * rope.length
-        }
-      }
-      const v = this.velocity
-      const ax = 220 * (target.x - this.candy.x) - 28 * v.x
-      const ay = 220 * (target.y - this.candy.y) - 28 * v.y - GRAVITY
-      const limit = Math.min(1, 18000 / (Math.hypot(ax, ay) || 1))
-      Body.applyForce(this.body, this.candy, { x: ax * limit * this.body.mass / 1e6, y: ay * limit * this.body.mass / 1e6 })
-    }
     Engine.update(this.engine, STEP * 1000)
     for (let iteration = 0; iteration < 4; iteration++) for (const rope of this.ropes) {
       if (rope.cut) continue
@@ -142,7 +112,7 @@ export class RopeWorld {
         this.collected[i] = true; this.events.push({ kind: 'star', at: { ...star } })
       }
     })
-    if (!this.held && distanceToSegment(this.level.mouth, before, this.candy) < 35) {
+    if (distanceToSegment(this.level.mouth, before, this.candy) < 50) {
       this.outcome = 'won'; this.events.push({ kind: 'won', at: { ...this.level.mouth } })
     } else if (this.candy.y > HEIGHT + 60 || this.candy.x < -80 || this.candy.x > WIDTH + 80) {
       this.outcome = 'lost'; this.events.push({ kind: 'lost', at: { ...this.candy } })

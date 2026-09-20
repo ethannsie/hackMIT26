@@ -50,24 +50,24 @@ export class RopeArt {
       ctx.restore()
     }
     ctx.fillStyle = '#52704b'; ctx.font = '600 12px system-ui'; ctx.textAlign = 'left'
-    ctx.fillText('LEVEL 01 · THE PHYSICS PLAYGROUND', 62, 148)
+    ctx.fillText(`LEVEL 0${world.level.id} · THE PHYSICS PUZZLES`, 62, 148)
     ctx.fillStyle = '#264f39'; ctx.font = '800 43px system-ui'
-    ctx.fillText('Swing & sling.', 60, 206)
+    ctx.fillText(world.level.name, 60, 206)
     ctx.font = '18px system-ui'; ctx.fillStyle = '#60775b'
-    ctx.fillText('Give your candy momentum.', 63, 248)
-    ctx.fillText('Find your own way to dinner.', 63, 277)
+    ctx.fillText(world.level.lesson?.[0] ?? '', 63, 248)
+    ctx.fillText(world.level.lesson?.[1] ?? '', 63, 277)
 
     ctx.save(); ctx.translate(80, 341); ctx.rotate(-0.025)
     ctx.fillStyle = '#ffffff90'; ctx.beginPath(); ctx.roundRect(-20, -30, 275, 211, 18); ctx.fill()
-    ctx.fillStyle = '#315b42'; ctx.font = '700 19px system-ui'; ctx.fillText('01  Pinch to pick up', 0, 0)
+    ctx.fillStyle = '#315b42'; ctx.font = '700 19px system-ui'; ctx.fillText('01  Watch the motion', 0, 0)
     ctx.font = '15px system-ui'; ctx.fillStyle = '#60775b'
-    ctx.fillText('Thumb + index around the candy.', 0, 27)
-    ctx.fillStyle = '#315b42'; ctx.font = '700 19px system-ui'; ctx.fillText('02  Swing, then cut', 0, 66)
+    ctx.fillText('Gravity does the moving.', 0, 27)
+    ctx.fillStyle = '#315b42'; ctx.font = '700 19px system-ui'; ctx.fillText('02  Swipe through rope', 0, 66)
     ctx.font = '15px system-ui'; ctx.fillStyle = '#60775b'
-    ctx.fillText('The rope limits how far it goes.', 0, 93)
-    ctx.fillStyle = '#315b42'; ctx.font = '700 19px system-ui'; ctx.fillText('03  Open to release', 0, 132)
+    ctx.fillText('Point your index finger to cut.', 0, 93)
+    ctx.fillStyle = '#315b42'; ctx.font = '700 19px system-ui'; ctx.fillText('03  Let physics finish', 0, 132)
     ctx.font = '15px system-ui'; ctx.fillStyle = '#60775b'
-    ctx.fillText('Let go. Your candy keeps moving.', 0, 159); ctx.restore()
+    ctx.fillText('Collect stars. Feed your friend.', 0, 159); ctx.restore()
     ctx.font = '600 14px system-ui'; ctx.fillStyle = '#53734e'
     ctx.fillText('GRAVITY   9.81 m/s²', 65, 300)
 
@@ -107,11 +107,14 @@ export class RopeArt {
       this.disc(ctx, p.x, p.y, 3, '#627d55')
     }
     ctx.globalAlpha = 1
-    if (world.target) {
-      ctx.strokeStyle = '#368ba0'; ctx.lineWidth = 2; ctx.setLineDash([4, 5])
-      ctx.beginPath(); ctx.moveTo(world.candy.x, world.candy.y); ctx.lineTo(world.target.x, world.target.y); ctx.stroke(); ctx.setLineDash([])
-      ctx.strokeStyle = '#3d9b9b'; ctx.lineWidth = 3
-      ctx.beginPath(); ctx.arc(world.candy.x, world.candy.y, 34, 0, Math.PI * 2); ctx.stroke()
+    // Velocity arrow shows the actual tangent before cutting and the flight after.
+    const v = world.velocity, speed = Math.hypot(v.x, v.y)
+    if (speed > 20 && world.outcome === 'playing') {
+      const length = Math.min(100, speed * 0.18), angle = Math.atan2(v.y, v.x)
+      ctx.save(); ctx.translate(world.candy.x, world.candy.y); ctx.rotate(angle)
+      ctx.strokeStyle = '#258b91'; ctx.lineWidth = 4
+      ctx.beginPath(); ctx.moveTo(30, 0); ctx.lineTo(30 + length, 0)
+      ctx.lineTo(20 + length, -7); ctx.moveTo(30 + length, 0); ctx.lineTo(20 + length, 7); ctx.stroke(); ctx.restore()
     }
 
     // The visible rope is the exact line tested by the blade.
@@ -164,7 +167,7 @@ export class RopeArt {
     }
     ctx.shadowBlur = 0; ctx.globalAlpha = 1
     if (trackedHand?.landmarks_m?.length === 21) {
-      drawTrackedHand(ctx, trackedHand, world.held)
+      drawTrackedHand(ctx, trackedHand)
     } else if (hand) {
       this.disc(ctx, hand.x, hand.y, 15, '#ffffffb0')
       ctx.strokeStyle = '#287657'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(hand.x, hand.y, 21, 0, 2 * Math.PI); ctx.stroke()

@@ -5,6 +5,8 @@ export type Surface =
 export interface RopeLevel {
   id: number
   name: string
+  lesson?: [string, string]
+  hint?: string
   candy: Point
   anchors: Point[]
   stars: Point[]
@@ -16,20 +18,24 @@ export const WIDTH = 1280
 export const HEIGHT = 800
 export const PLANNED_LEVELS = 5
 
-// Level one is a small physics playground: swing, cut, throw, bounce, recover.
+// Every solution uses only gravity, rope tension, cut timing and collisions.
 export const LEVELS: readonly RopeLevel[] = [{
   id: 1,
-  name: 'Swing & sling',
-  candy: { x: 540, y: 340 },
-  anchors: [{ x: 540, y: 150 }],
-  stars: [{ x: 650, y: 320 }, { x: 820, y: 400 }, { x: 1060, y: 590 }],
-  mouth: { x: 1110, y: 665 },
-  surfaces: [
-    { kind: 'box', x: 800, y: 743, width: 864, height: 30, label: 'floor' },
-    { kind: 'box', x: 380, y: 432, width: 24, height: 620, label: 'wall' },
-    { kind: 'box', x: 1220, y: 432, width: 24, height: 620, label: 'wall' },
-    { kind: 'box', x: 800, y: 122, width: 864, height: 16, label: 'ceiling' },
-    { kind: 'box', x: 760, y: 635, width: 300, height: 24, angle: 0.28, label: 'ramp' },
-    { kind: 'bumper', x: 1010, y: 355, radius: 42, label: 'rubber bumper' },
-  ],
+  name: 'Swing & soar',
+  lesson: ['Height becomes speed.', 'Cut to keep that momentum.'],
+  hint: 'Cut as the candy swings right.',
+  candy: { x: 460, y: 310 },
+  anchors: [{ x: 650, y: 160 }],
+  stars: [{ x: 650, y: 402 }, { x: 800, y: 464 }, { x: 925, y: 605 }],
+  mouth: { x: 965, y: 665 },
+}, {
+  id: 2,
+  name: 'Drop & bounce',
+  lesson: ['Gravity builds speed.', 'The bumper redirects it.'],
+  hint: 'Cut above the rubber bumper.',
+  candy: { x: 580, y: 240 },
+  anchors: [{ x: 580, y: 140 }],
+  stars: [{ x: 580, y: 360 }, { x: 680, y: 492 }, { x: 820, y: 599 }],
+  mouth: { x: 875, y: 665 },
+  surfaces: [{ kind: 'bumper', x: 530, y: 560, radius: 70, label: 'rubber bumper' }],
 }]

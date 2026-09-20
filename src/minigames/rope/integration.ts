@@ -20,6 +20,8 @@ export class RopeMinigame {
     this.stream.addEventListener('rope:control', e => {
       const { action } = JSON.parse((e as MessageEvent).data) as { action: string }
       if (action === 'restart') this.game?.restart()
+      if (action === 'replay') this.game?.replay()
+      if (action === 'next') this.game?.nextLevel()
       if (action === 'cut') this.game?.cutRopes()
     })
     if (this.standalone) {
@@ -36,6 +38,6 @@ export class RopeMinigame {
   private async setView(view: string): Promise<void> {
     try {
       await fetch(`${this.base}/api/view`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ view }) })
-    } catch { /* Standalone mouse preview also works without a running panel. */ }
+    } catch { /* Standalone preview also works without a running panel. */ }
   }
 }

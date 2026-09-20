@@ -1,78 +1,64 @@
-# Hand-cut rope minigame
+# Hand-cut rope physics puzzles
 
-One playable physics playground of a planned five-level game. Move a real
-rigid-body candy with a thumb–index pinch, swing it on a rope, cut, throw, and
-bounce off a ramp, rubber bumper, floor, ceiling and side walls. Original canvas
-artwork, three collectible stars, a hungry creature, win/loss feedback and
-restart. Levels 2–5 remain visibly locked placeholders.
+Two playable levels of five planned. Hands **only cut ropes**: candy cannot be
+picked up, dragged, thrown or rescued. All motion comes from gravity, rope
+tension and collision response. Full live hand overlay, index blade, velocity
+arrow, flight trail, three stars, and win/loss feedback.
 
-## Play from the touchscreen
+- **Swing & soar:** candy starts displaced on a pendulum. Cut during its
+  rightward swing to preserve tangential momentum and reach the creature.
+- **Drop & bounce:** cut the hanging candy. It accelerates under gravity and
+  rebounds off the curved rubber bumper toward the creature.
 
-Run the usual app on `http://localhost:5173/` and the panel service on
-`http://localhost:8770/`. Select **Cut the Rope** on the panel home screen.
-The main display opens the game; the panel shows score, tracking status, Restart
-and Exit. Exiting resumes the previous physics scene at its preserved time.
-The panel server needs restarting after installing this branch; Vite serves the
-game with the existing build/launcher. No new packages, model or camera process.
+Both have verified three-star solutions without injected velocities or forces.
+Missing the creature lets the candy leave the stage and enables another attempt.
 
-The camera frame maps to the game canvas. The complete translucent 21-joint hand
-is drawn in the same coordinates as interaction. **Pinch the candy between
-thumb and index to pick it up. Move to swing it, then open those fingers to
-release.** The target is the midpoint between the two fingertips. The candy is
-pulled by a damped spring force, rather than teleported; release preserves its
-actual velocity. A cyan tether and candy ring show when you are holding it.
-An intact rope limits how far it can move.
+## Play and resume
 
-**All buttons are on the touchscreen:** Cut rope, Restart level, Exit game.
-The big display is presentation-only: no mouse drag handlers, game shortcuts,
-restart buttons, or clickable result controls. After a win, use Restart on the
-small screen. A continuous open-hand swipe can also cut a rope; closing or
-opening a pinch cannot accidentally create a cutting stroke.
+Open the main app at `http://localhost:5173/` and touchscreen menu at
+`http://localhost:8770/`. Select **Cut the Rope** from the menu.
+All buttons stay on the touchscreen: **Cut rope**, **Restart level**, **Next
+level** (after winning level one), and **Exit game**. The big screen has no
+mouse or keyboard game controls. After level two, the preview is complete;
+**Replay levels** starts again at level one, keeping best stars;
+levels 3–5 are deferred. Exit restores the underlying simulation.
 
-Pinch detection uses the thumb–index gap divided by palm width: acquire below
-0.35, release above 0.60. This hysteresis keeps a grip stable. It reads the
-landmarks directly, so the shared tracker's whole-hand fist score cannot disable
-a pinch. Tracking loss or a large pose jump releases without injecting a
-camera-derived impulse; reacquisition cannot create a phantom cutting stroke.
-You can pick the candy up again after a missed throw. The goal only accepts a
-released candy, so moving it over the creature while holding does not win.
+A pointing index or open hand sweeps through a rope to cut it. Curl the index
+to reposition safely; the full hand remains visible. Tracking loss, stale
+observations, hand switches and large jumps break the blade stroke. There is
+no grabbing gesture or force coupling to the candy.
 
-The panel owns the webcam and enables tracking during the game, then restores
-the existing Auto/On/Off behavior on exit. Speed is shown in m/s; gravity is
-9.81 m/s² at 85 game pixels per metre. Friction produces spin on contact; the
-rubber bumper has a higher restitution than the other surfaces.
+The big screen saves current level and best stars in localStorage. Reopening
+in the same browser resumes that level with a fresh attempt. Storage is
+optional; blocked storage does not prevent play. Restart retries the current
+level. Panel and Vite processes need relaunching after laptop shutdown.
 
-The existing `handspan` query parameter works here too. Start at its default
-1.0; `?handspan=0.8` maps the middle 80% of the camera onto the playfield.
+Mac preview (two terminals in the repository):
 
-For the two-display demo, keep **one main app window** and one panel window
-open: several copies compete for the shared menu and the browser's per-origin
-streaming-connection budget. Select the game from the menu; do not use the old
-`hand=mouse` preview URL. The game now always uses the camera.
+```sh
+npx vite --host localhost --port 5173 --strictPort
+PANEL_CAMERA_INDEX=1 PANEL_ALLOW_SHUTDOWN=0 PANEL_LIGHT=0 .venv/bin/python panel/panel_server.py
+```
+
+Camera index 1 is this Mac's FaceTime camera, not a GX10 setting. The panel owns
+the webcam and automatically enables tracking in the game. Use one main app
+and one menu window to avoid competing sessions/SSE connection limits.
+The existing `handspan` query parameter controls camera-to-canvas mapping.
 
 ## Ownership and merge boundaries
 
-Keep subsequent game work in this folder and `panel/rope_game.py`,
-`panel/ui/rope.{js,css}`, `panel/test_rope_game.py`, `scripts/verify-rope.ts`.
-There are just four small shared-file integration points:
+Keep game changes in this folder, `panel/rope_game.py`, `panel/ui/rope.{js,css}`,
+`panel/test_rope_game.py` and `scripts/verify-rope.ts`. Existing integration hooks:
 
-- `src/main.ts`: import, controller construction, skip the host loop while active.
-- `panel/panel_server.py`: recognize the game view, enable tracking, delegate routes.
-- `panel/ui/index.html`: menu tile and controller markup/assets.
-- `panel/ui/panel.js`: register the additional view.
+- `src/main.ts`: construct controller and suspend host loop while playing.
+- `panel/panel_server.py`: game view, tracking activation and delegated routes.
+- `panel/ui/index.html`: menu tile, controller markup and assets.
+- `panel/ui/panel.js`: additional view registration.
 
-No changes to the solver, sandbox, shared physics engine, camera tracker, hand-source
-contract, dependency lockfile, or GX10 launcher. Game styling is inside a Shadow
-DOM; the hidden app is inert while playing. The hand input adapter reads the
-existing `RemoteHandSource`, with its coordinate mapping set to game pixels.
-The engine wraps a private Matter.js world (already a project dependency) with
-240 Hz collision steps, unilateral rope tension, physically computed disk
-inertia, and a capped force for hand dragging. The fastest allowed throw moves
-less than 8 pixels per collision step. All collision surfaces come from level
-data and are drawn using their exact dimensions.
-
-Add future layouts in `levels.ts` and level selection in `game.ts` and the
-dedicated panel files. Do not extend the problem-mode enum for minigames.
+No changes to the solver, sandbox, shared physics, tracking, dependencies or
+launcher. Shadow DOM isolates game styles. A private Matter world advances at
+240 Hz, with gravity 9.81 m/s² at 85 px/m, disk inertia, unilateral ropes and
+swept star/goal/cut checks. Collision geometry matches the drawn level data.
 
 ## Validation
 
@@ -84,10 +70,8 @@ npx tsx scripts/verify-rope.ts
 .venv/bin/python panel/test_rope_game.py
 ```
 
-The rope checks cover suspension, both the vertical fixture and the redesigned
-level's three-star throw, swept cuts, swing/release momentum, gravity parabolas,
-render-rate determinism, high-speed floor/wall containment, dragging against a
-wall, ramp spin, bumper rebound, held-goal rejection, pinch acquisition/release, palm-relative thresholds,
-hysteresis, and tracking dropout/jump handling. Panel tests exercise HTTP
-routing, status expiry, retry/cut events and restoring tracking.
-Physical swipe/throw feel on the GX10 still needs a hardware rehearsal.
+Checks cover both cut-only three-star solutions, an incorrect cut, the viable
+swing timing window, pendulum release momentum, gravity, render-rate
+determinism, collision containment, gesture continuity, progress persistence,
+Next gating/end-of-preview, HTTP control transport and tracking lifecycle.
+Physical hand feel and two-display GX10 rehearsal remain hardware checks.

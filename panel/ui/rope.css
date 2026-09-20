@@ -10,4 +10,6 @@
 #rope-status { max-width: 620px; min-height: 48px; font-size: 16px; }
 .rope-levels { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #8eab80; }
 .rope-levels span { padding: 6px 12px; border: 1px solid #384736; border-radius: 8px; opacity: .5; }
-.rope-levels span:first-child { background: #d5eeb0; color: #284330; opacity: 1; }
+.rope-levels span.active { background: #d5eeb0; color: #284330; opacity: 1; }
+
+#rope-next[hidden] { display: none; }

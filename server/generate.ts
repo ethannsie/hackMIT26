@@ -2,13 +2,13 @@
  * Prompts for the two text-only jobs the local model does besides reading
  * photos: writing a fresh problem, and answering a question at the table.
  *
- * Both run on the GX10 through the same OpenAI-compatible Ollama endpoint as
- * extraction. Problem generation reuses the extraction schema, so a generated
+ * Both run on the GX10's Ollama, through the native chat route with reasoning
+ * off (server/ollama.ts). Problem generation reuses the extraction schema, so a generated
  * problem is a ProblemSpec the moment it comes back — same validator, same
  * builders, same derivation. The model writes the statement AND the numbers;
  * nothing else has to parse the statement afterwards.
  */
-import { PROBLEM_TYPES, type ProblemType } from '../src/spec/types.ts'
+import { PROBLEM_TYPES, type ProblemSpec, type ProblemType } from '../src/spec/types.ts'
 
 /**
  * Which `given` fields a generated problem of each type must fill, with the
@@ -68,7 +68,8 @@ RULES
 4. gravity_ms2 is 9.81 unless the problem is set somewhere else and says so.
 5. Use SI units in the schema even if the text says centimetres or grams. Pick numbers that make the problem interesting but ordinary — nothing microscopic, nothing astronomical.
 6. Ask for two or three of the listed quantities, in asked_for, in the order the text asks for them.
-7. Do not solve the problem or include an answer.`
+7. If something is launched or thrown horizontally, launch_angle_deg is 0; if it is dropped, v0_ms is 0. Otherwise every angle and speed must be written in the text.
+8. Do not solve the problem or include an answer.`
   const user = `Setting: ${setting}. Vary the numbers from the obvious round ones (seed ${Math.floor(Math.random() * 1e6)}).`
   return { system, user, setting }
 }
@@ -78,3 +79,39 @@ export const TUTOR_SYSTEM = `You are a physics tutor standing at a science-fair 
 Answer in plain spoken English, at most 120 words, no LaTeX, no bullet lists, no headings. Give the physical idea first, then one concrete number or example if the current problem provides one. If the question is not about physics, say so kindly in one sentence and offer to talk about the simulation instead.
 
 You may be given passages from an introductory physics textbook and the problem currently on screen. Prefer them over memory when they cover the question; never claim a passage says something it does not. Do not mention that you were given passages.`
+
+/**
+ * The statement and the schema must agree: every number the schema records
+ * has to be one the text states. With reasoning off the model occasionally
+ * writes "kicked horizontally" and records a 30° angle; this catches that so
+ * the caller can ask for another draft rather than show a student a problem
+ * whose animation does not match its words.
+ *
+ * Returns a description of the first mismatch, or null when consistent.
+ */
+export function numbersConsistent(spec: ProblemSpec): string | null {
+  const inText = new Set<number>()
+  for (const m of spec.raw_text.matchAll(/-?\d+(?:\.\d+)?/g)) inText.add(Number(m[0]))
+  const stated = (v: number): boolean => {
+    for (const t of inText) {
+      // Same value, or the same value before a unit conversion the model
+      // was told to do (cm -> m, g -> kg, km/h -> m/s), or a sign flip.
+      for (const f of [1, 100, 1000, 3.6, 1 / 100, 1 / 1000, 1 / 3.6]) {
+        if (Math.abs(Math.abs(t) * f - Math.abs(v)) <= 0.011 * Math.max(1, Math.abs(v))) return true
+      }
+    }
+    return false
+  }
+  for (const [key, value] of Object.entries(spec.given)) {
+    if (typeof value !== 'number') continue
+    // Defaults the prompt allows the model to fill in without stating them.
+    if (key === 'gravity_ms2' && Math.abs(value - 9.81) < 0.01) continue
+    if (key === 'initial_velocity_ms' && value === 0) continue
+    if (key === 'restitution' && (value === 0 || value === 1)) continue
+    if (key === 'h0_m' && value === 0) continue
+    if (key === 'radius_m' && value === 0 && spec.problem_type === 'rotating_frame') continue
+    if (key === 'launch_angle_deg' && value === 0) continue
+    if (!stated(value)) return `given.${key} = ${value} does not appear in the problem text`
+  }
+  return null
+}

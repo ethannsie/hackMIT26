@@ -23,8 +23,10 @@ import OpenAI from 'openai'
 import { RESPONSE_FORMAT } from '../src/spec/schema.ts'
 import { validateSpec } from '../src/spec/validate.ts'
 import { SYSTEM_PROMPT, USER_PROMPT } from './prompt.ts'
-import { generatePrompt, pickType, TUTOR_SYSTEM } from './generate.ts'
+import { generatePrompt, pickType, numbersConsistent, TUTOR_SYSTEM } from './generate.ts'
 import { Corpus } from './corpus.ts'
+import { chat, nativeBase } from './ollama.ts'
+import { PROBLEM_SPEC_SCHEMA } from '../src/spec/schema.ts'
 
 const PORT = Number(process.env['API_PORT'] ?? 8787)
 const MODEL = process.env['OPENAI_MODEL'] ?? 'gpt-4o'
@@ -37,7 +39,9 @@ const LOCAL_TIMEOUT_MS = Number(process.env['EXTRACT_LOCAL_TIMEOUT_MS'] ?? 45_00
 // model: no picture to read, and a 67 tok/s answer at a demo table beats an
 // 18 tok/s one. Falls back to the extraction model if unset.
 const TEXT_MODEL = process.env['TEXT_LOCAL_MODEL'] ?? 'nemotron-3.5-lightning'
-const TEXT_TIMEOUT_MS = Number(process.env['TEXT_LOCAL_TIMEOUT_MS'] ?? 60_000)
+const TEXT_TIMEOUT_MS = Number(process.env['TEXT_LOCAL_TIMEOUT_MS'] ?? 30_000)
+// Native Ollama root for those jobs: it is where `think: false` lives.
+const OLLAMA = LOCAL_URL ? nativeBase(LOCAL_URL) : null
 // Speech-to-text is the one hosted piece: Deepgram, keyed from .env and only
 // ever called from this process. Without a key the Ask box still works typed.
 const DEEPGRAM_KEY = process.env['DEEPGRAM_API_KEY']
@@ -96,41 +100,44 @@ app.post('/api/generate', async (req, res) => {
     return
   }
   const type = pickType((req.body as { problem_type?: unknown })?.problem_type as string | undefined)
-  const { system, user, setting } = generatePrompt(type)
-  // Two tries: a creative temperature occasionally produces a spec the
-  // validator rejects (a missing required field), and a second draft is
-  // cheaper than a "try again" button.
+  // Three tries: at a creative temperature with reasoning off, a draft now
+  // and then fails validation or states one number and records another. A
+  // fresh draft is ~5 s; a "try again" button at a demo table is worse.
   let lastError = ''
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { system, user, setting } = generatePrompt(type)
     try {
-      const completion = await local.chat.completions.create(
-        {
-          model: TEXT_MODEL,
-          temperature: 0.9,
-          response_format: RESPONSE_FORMAT,
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user },
-          ],
-        },
-        { timeout: TEXT_TIMEOUT_MS, maxRetries: 0 },
-      )
-      const text = completion.choices[0]?.message?.content
-      if (!text) throw new Error(`${TEXT_MODEL} returned an empty response`)
-      const result = validateSpec(JSON.parse(text))
+      const reply = await chat(OLLAMA!, {
+        model: TEXT_MODEL,
+        temperature: 0.9,
+        format: PROBLEM_SPEC_SCHEMA,
+        maxTokens: 700,
+        timeoutMs: TEXT_TIMEOUT_MS,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+      })
+      const result = validateSpec(JSON.parse(reply.content))
       if (!result.ok || !result.spec) {
         lastError = result.errors.join('; ')
         continue
       }
-      // The model chose the type; the request did. Trust the request.
+      // The request chose the type; the model does not get to change it.
       if (result.spec.problem_type !== type) {
         lastError = `model wrote a ${result.spec.problem_type} problem instead of ${type}`
+        continue
+      }
+      const mismatch = numbersConsistent(result.spec)
+      if (mismatch) {
+        lastError = mismatch
+        console.warn(`generate attempt ${attempt + 1}: ${mismatch}`)
         continue
       }
       res.json({ ...result, source: 'local' as const, setting, elapsed_ms: Date.now() - started })
       return
     } catch (err) {
-      lastError = `${TEXT_MODEL} at ${LOCAL_URL}: ${(err as Error).message}`
+      lastError = `${TEXT_MODEL} at ${OLLAMA}: ${(err as Error).message}`
       console.warn(`generate attempt ${attempt + 1} failed: ${lastError}`)
     }
   }
@@ -167,20 +174,17 @@ app.post('/api/ask', async (req, res) => {
   }
   parts.push(`The visitor asks: ${question}`)
   try {
-    const completion = await local.chat.completions.create(
-      {
-        model: TEXT_MODEL,
-        temperature: 0.3,
-        max_tokens: 320,
-        messages: [
-          { role: 'system', content: TUTOR_SYSTEM },
-          { role: 'user', content: parts.join('\n\n') },
-        ],
-      },
-      { timeout: TEXT_TIMEOUT_MS, maxRetries: 0 },
-    )
-    const answer = completion.choices[0]?.message?.content?.trim()
-    if (!answer) throw new Error(`${TEXT_MODEL} returned an empty response`)
+    const reply = await chat(OLLAMA!, {
+      model: TEXT_MODEL,
+      temperature: 0.3,
+      maxTokens: 320,
+      timeoutMs: TEXT_TIMEOUT_MS,
+      messages: [
+        { role: 'system', content: TUTOR_SYSTEM },
+        { role: 'user', content: parts.join('\n\n') },
+      ],
+    })
+    const answer = reply.content
     res.json({
       question,
       answer,
@@ -190,7 +194,7 @@ app.post('/api/ask', async (req, res) => {
       elapsed_ms: Date.now() - started,
     })
   } catch (err) {
-    res.status(502).json({ error: `${TEXT_MODEL} at ${LOCAL_URL}: ${(err as Error).message}` })
+    res.status(502).json({ error: `${TEXT_MODEL} at ${OLLAMA}: ${(err as Error).message}` })
   }
 })
 

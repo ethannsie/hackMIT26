@@ -13,6 +13,8 @@ import { renderDerivation } from './render/derivation.ts'
 import { MotionCharts, MotionRecorder } from './render/charts.ts'
 import { HandCoupling, type CouplingState } from './hand/coupling.ts'
 import { MockHandSource } from './hand/mock.ts'
+import { RemoteHandSource } from './hand/remote.ts'
+import { PanelLink } from './panel/link.ts'
 import { extractFromImage } from './extract/client.ts'
 import { PRESETS, KNOBS } from './presets.ts'
 import { SandboxMode } from './sandbox/ui.ts'
@@ -158,6 +160,39 @@ const hand = new MockHandSource({
   metresPerPixel: 1 / view.pixelsPerMetre,
 })
 
+/**
+ * Real hand tracking, when the control panel is running on the demo box.
+ *
+ * The panel owns the webcam and publishes HandFrames already in this app's
+ * sim frame, so this is a drop-in peer of the mouse mock rather than a second
+ * code path: `handFrame()` prefers the camera and falls back to the mouse the
+ * instant the camera stops producing. A laptop with no panel behaves exactly
+ * as it did before.
+ */
+const remoteHand = new RemoteHandSource({ base: `http://${window.location.hostname}:8770` })
+
+function handFrame() {
+  return remoteHand.current() ?? hand.current()
+}
+
+/**
+ * The panel's scan button ends up here. Same compression, same extraction,
+ * same failure handling as the file picker — the only difference is where the
+ * bytes came from, which is why both call ingestImage rather than each having
+ * their own copy of the ladder.
+ */
+const panelLink = new PanelLink({
+  onScan: (image, file) => {
+    // A scan is a problem, so leave sandbox for it. Otherwise the spec loads
+    // into a world the sandbox view is not drawing and the scan looks ignored.
+    if (mode !== 'problem') setMode('problem')
+    void ingestImage(image, `panel scan ${file}`)
+  },
+  onLink: (up) => {
+    if (up) setStatus('control panel linked — press 1 on the panel to scan')
+  },
+})
+
 // --- problem mode ----------------------------------------------------------
 
 function load(next: ProblemSpec, nextRepairs: string[] = []): void {
@@ -287,6 +322,9 @@ function setMode(next: Mode): void {
   if (window.location.hash !== hash) {
     window.history.replaceState(null, '', hash || window.location.pathname)
   }
+
+  // The panel follows the app into sandbox, where hands matter.
+  void panelLink.setMode(inSandbox ? 'sandbox' : 'problem')
 
   if (inSandbox) {
     hand.stop()
@@ -475,10 +513,15 @@ helpEl.addEventListener('click', (e) => {
   if (e.target === helpEl) helpEl.hidden = true
 })
 
-fileEl.addEventListener('change', async () => {
-  const file = fileEl.files?.[0]
-  if (!file) return
-  setStatus('compressing and extracting…', 'warn')
+/**
+ * One image in, one solved problem out.
+ *
+ * Shared by the file picker and the control panel's scan button so there is a
+ * single place where extraction failure, low confidence and the compression
+ * report are handled. `origin` is only for the status line.
+ */
+async function ingestImage(file: Blob, origin: string): Promise<void> {
+  setStatus(`${origin}: compressing and extracting…`, 'warn')
   try {
     const result = await extractFromImage(file)
     const kb = (n: number): string => `${Math.round(n / 1024)} KB`
@@ -502,7 +545,16 @@ fileEl.addEventListener('change', async () => {
     }
   } catch (err) {
     setStatus((err as Error).message, 'error')
+  }
+}
+
+fileEl.addEventListener('change', async () => {
+  const file = fileEl.files?.[0]
+  if (!file) return
+  try {
+    await ingestImage(file, 'photo')
   } finally {
+    // Clear unconditionally: re-picking the same file must fire change again.
     fileEl.value = ''
   }
 })
@@ -617,7 +669,7 @@ function frame(nowMs: number): void {
   } else {
     if (running) {
       world.advanceWith(elapsed, () => {
-        lastCoupling = coupling.update(world, hand.current())
+        lastCoupling = coupling.update(world, handFrame())
         return lastCoupling.force ? [lastCoupling.force] : []
       })
       recordFrame()
@@ -650,6 +702,10 @@ function frame(nowMs: number): void {
 
   requestAnimationFrame(frame)
 }
+
+// Optional accessory: both of these no-op if the panel service is not running.
+panelLink.connect()
+void remoteHand.start()
 
 load(spec)
 refreshHistoryUi()

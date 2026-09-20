@@ -8,6 +8,13 @@ A webcam-first prototype for the planned physics interaction:
 - a hand-colored virtual avatar with a palm, rounded fingers, and wrist follows the tracked hand;
 - landmarks are smoothed and the gesture needs three frames to change state.
 
+## The demo box
+
+On the GX10 the touchscreen controls live in [`panel/`](panel/README.md) —
+scan, hand overlay and shutdown on the 7 in. second display. That service owns
+the webcam, so run it instead of this standalone demo when both would want the
+camera.
+
 ## Run it
 
 Use Python 3.10 or newer, then install the packages, download the official

@@ -4,3 +4,9 @@ dist/
 .env.local
 *.log
 .DS_Store
+
+# Panel scans and the MediaPipe model (fetched by panel/setup.sh)
+captures/
+panel/models/
+hand_landmarker.task
+__pycache__/

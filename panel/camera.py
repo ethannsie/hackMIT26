@@ -68,6 +68,11 @@ BONE_COLOR = (170, 214, 122)      # BGR, reads as green on the small panel
 JOINT_COLOR = (255, 232, 140)
 PINCH_COLOR = (90, 200, 255)
 
+# Thumb-tip to index-tip distance as a fraction of palm width: fully pinched
+# and fully open. See _track() for how these become the 0..1 pinch value.
+PINCH_CLOSED = float(os.environ.get("PANEL_PINCH_CLOSED", "0.2"))
+PINCH_OPEN = float(os.environ.get("PANEL_PINCH_OPEN", "0.8"))
+
 
 def clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(value, upper))
@@ -109,6 +114,13 @@ class HandReading:
     palm_velocity_ms: tuple[float, float, float]
     pinch: float
     landmarks_m: list[tuple[float, float, float]] = field(default_factory=list)
+    # The same points as fractions of the (mirrored) camera frame, 0..1, image
+    # y down. The metre frame above assumes a fixed width for the whole camera
+    # view (PANEL_SCENE_WIDTH_M), which cannot match a sim that zooms to fit
+    # each problem; the app maps these onto whatever it is currently showing,
+    # so the full camera frame is always the full canvas.
+    palm_n: tuple[float, float] = (0.5, 0.5)
+    landmarks_n: list[tuple[float, float]] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -123,6 +135,8 @@ class HandReading:
             },
             "pinch": self.pinch,
             "landmarks_m": [{"x": p[0], "y": p[1], "z": p[2]} for p in self.landmarks_m],
+            "palm_n": {"x": self.palm_n[0], "y": self.palm_n[1]},
+            "landmarks_n": [{"x": p[0], "y": p[1]} for p in self.landmarks_n],
         }
 
 
@@ -168,6 +182,7 @@ class CameraWorker:
         self._last_palm_px: Optional[np.ndarray] = None
         self._last_palm_t = 0.0
         self._pinch_latched = False
+        self._pinch_ratio = 0.0
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -356,9 +371,18 @@ class CameraWorker:
         # Pinch, normalised against this hand's own size so it survives the hand
         # moving toward and away from the camera. Hysteresis matches the
         # PINCH_GRAB / PINCH_RELEASE pair in src/hand/types.ts.
+        #
+        # ratio = tip gap / palm width. MediaPipe's tip landmarks sit on the
+        # finger pads, so two fingers that are physically touching still read
+        # ~0.15–0.25 apart; an open hand reads ~0.9–1.2. The curve maps
+        # PINCH_CLOSED → 1.0 and PINCH_OPEN → 0.0, so with the defaults a grab
+        # (0.7) needs ratio ≤ 0.38 and lets go (0.5) at 0.5 — fingers close,
+        # not fused. The old 0.62 scale needed ≤ 0.19, i.e. a perfect touch.
         gap = float(np.linalg.norm(points[THUMB_TIP] - points[INDEX_TIP]))
         span = max(palm_width_px, 1.0)
-        pinch = clamp(1.0 - gap / (0.62 * span), 0.0, 1.0)
+        ratio = gap / span
+        pinch = clamp(1.0 - (ratio - PINCH_CLOSED) / max(PINCH_OPEN - PINCH_CLOSED, 1e-3), 0.0, 1.0)
+        self._pinch_ratio = ratio
         self._pinch_latched = pinch >= 0.7 if not self._pinch_latched else pinch > 0.5
 
         handedness = "right"
@@ -428,6 +452,8 @@ class CameraWorker:
             palm_velocity_ms=(vx, vy, 0.0),
             pinch=pinch,
             landmarks_m=landmarks_m,
+            palm_n=(float(palm_px[0]) / width, float(palm_px[1]) / height),
+            landmarks_n=[(float(p[0]) / width, float(p[1]) / height) for p in points],
         )
 
     # --- drawing -----------------------------------------------------------
@@ -444,7 +470,8 @@ class CameraWorker:
         # see, so it gets drawn as the thing it is: the distance being measured.
         color = PINCH_COLOR if self._pinch_latched else (200, 200, 200)
         cv2.line(frame, tuple(pts[THUMB_TIP]), tuple(pts[INDEX_TIP]), color, 2, cv2.LINE_AA)
-        label = f"pinch {pinch:.2f}" + ("  GRAB" if self._pinch_latched else "")
+        # The ratio is what to look at when tuning PANEL_PINCH_CLOSED/_OPEN.
+        label = f"pinch {pinch:.2f}  gap {self._pinch_ratio:.2f}" + ("  GRAB" if self._pinch_latched else "")
         self._banner(frame, label, color)
 
     @staticmethod

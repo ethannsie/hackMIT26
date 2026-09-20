@@ -63,10 +63,12 @@ Two links, both optional in both directions:
   JPEG and runs it through the same `ingestImage` path as the file picker:
   compress, `/api/extract`, validate, simulate. Pressing **2** on the panel
   therefore solves a problem on the big screen.
-- **`/api/hand/events`** — SSE of `HandFrame`s, already converted into the
-  sim's metre frame. `src/hand/remote.ts` implements `HandSource` over it, so
-  the sim consumes real tracking through the same contract as the mouse mock
-  and falls back to the mouse the moment frames stop.
+- **`/api/hand/events`** — SSE of `HandFrame`s: `palm_n`/`landmarks_n` as
+  fractions of the camera frame plus the legacy metre fields.
+  `src/hand/remote.ts` implements `HandSource` over it and maps the fractions
+  onto the sim canvas, so the whole camera frame is the whole visible sim at
+  whatever zoom the view has (`?handspan=0.8` on the app URL reaches the
+  edges with less arm travel). Falls back to the mouse the moment frames stop.
 
 If this service is not running, the main app is exactly what it was: file
 picker, mouse-driven hand. Nothing in it waits on the panel.
@@ -121,7 +123,8 @@ reloaded panel comes back mid-scan exactly where it was.
 | `PANEL_CAMERA_WIDTH` / `_HEIGHT` | `1280` / `720` | |
 | `PANEL_CAMERA_FOURCC` / `_FPS` | `MJPG` / `30` | OpenCV's default raw YUYV caps a USB 2 webcam at ~10 fps at 720p; MJPEG runs at the C270's full 30 |
 | `PANEL_CAMERA_DYNAMIC_FPS` | `0` | `1` lets the C270's auto-exposure halve the rate in dim light (it does, to 15). Needs `v4l2-ctl` (`v4l-utils`) |
-| `PANEL_SCENE_WIDTH_M` | `1.6` | metres across the frame — the one number that sets how far a hand moves a body |
+| `PANEL_SCENE_WIDTH_M` | `1.6` | metres across the frame in the legacy `palm_m` fields. The app now uses `palm_n` (fractions of the frame) mapped onto its own canvas, so this only matters to older consumers |
+| `PANEL_PINCH_CLOSED` / `_OPEN` | `0.2` / `0.8` | thumb-tip to index-tip gap as a fraction of palm width at fully pinched / fully open. The hand view shows the live `gap` to tune against; a grab is 70 % of the way from open to closed |
 | `PANEL_CAPTURE_DIR` | `<repo>/captures` | |
 | `PANEL_MODEL` | auto | `hand_landmarker.task`; reuses the repo-root copy if `hand_physics_demo.py` already fetched one |
 | `PANEL_SHUTDOWN_CMD` | `sudo systemctl poweroff` | set to `echo dry-run` while testing |

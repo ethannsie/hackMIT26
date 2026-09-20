@@ -39,7 +39,20 @@ export interface BuiltScene {
   interactableIds: string[]
   /** Stable camera framing for this problem. */
   view: ViewBox
+  /**
+   * The border: inner faces of the walls that keep every body inside the
+   * scene, in scene metres (y UP). Drawn by the renderer, enforced by Matter.
+   */
+  bounds: ViewBox
 }
+
+/** A builder's output before the border is added. */
+type OpenScene = Omit<BuiltScene, 'bounds'>
+
+/** How far outside the view box the border sits, in metres. */
+export const BORDER_PAD_M = 0.25
+/** Ids of the border walls, so renderers and pickers can treat them as scenery. */
+export const isWallId = (id: string): boolean => id.startsWith('wall_')
 
 const GROUND_THICKNESS_PX = 40
 const WALL = { isStatic: true, friction: 0.6, restitution: 0.2 }
@@ -69,7 +82,7 @@ function groundForRange(rangeM: number): Matter.Body {
   return ground(Math.max(400, rangeM * 20))
 }
 
-function projectile(p: Extract<SimParams, { kind: 'projectile' }>): BuiltScene {
+function projectile(p: Extract<SimParams, { kind: 'projectile' }>): OpenScene {
   const r = mToPx(0.06)
   const ball = Bodies.circle(0, -mToPx(p.h0_m) - r, r, {
     label: 'projectile',
@@ -112,7 +125,7 @@ function projectile(p: Extract<SimParams, { kind: 'projectile' }>): BuiltScene {
   }
 }
 
-function inclinedPlane(p: Extract<SimParams, { kind: 'inclined_plane' }>): BuiltScene {
+function inclinedPlane(p: Extract<SimParams, { kind: 'inclined_plane' }>): OpenScene {
   const th = p.angle_deg * DEG
   const L = mToPx(p.ramp_length_m)
   const thickness = mToPx(0.05)
@@ -189,7 +202,7 @@ function inclinedPlane(p: Extract<SimParams, { kind: 'inclined_plane' }>): Built
   }
 }
 
-function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): BuiltScene {
+function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): OpenScene {
   const L = mToPx(p.length_m)
   const th = p.theta0_deg * DEG
 
@@ -226,7 +239,7 @@ function pendulum(p: Extract<SimParams, { kind: 'pendulum' }>): BuiltScene {
   }
 }
 
-function collision1d(p: Extract<SimParams, { kind: 'collision_1d' }>): BuiltScene {
+function collision1d(p: Extract<SimParams, { kind: 'collision_1d' }>): OpenScene {
   const h = mToPx(0.08)
   const w = mToPx(0.12)
   const y = -h / 2
@@ -273,7 +286,7 @@ function collision1d(p: Extract<SimParams, { kind: 'collision_1d' }>): BuiltScen
 
 function rollingWithoutSlipping(
   p: Extract<SimParams, { kind: 'rolling_without_slipping' }>,
-): BuiltScene {
+): OpenScene {
   const r = mToPx(p.radius_m)
   const wheel = Bodies.circle(-mToPx(1.5), -r, r, {
     label: 'wheel',
@@ -302,7 +315,7 @@ function rollingWithoutSlipping(
   }
 }
 
-function circularMotion(p: Extract<SimParams, { kind: 'circular_motion' }>): BuiltScene {
+function circularMotion(p: Extract<SimParams, { kind: 'circular_motion' }>): OpenScene {
   const R = mToPx(p.radius_m)
   const centreY = -R - mToPx(0.4)
 
@@ -344,7 +357,7 @@ function circularMotion(p: Extract<SimParams, { kind: 'circular_motion' }>): Bui
 
 function chargedParticle(
   p: Extract<SimParams, { kind: 'charged_particle_magnetic' }>,
-): BuiltScene {
+): OpenScene {
   const th = p.angle_deg * DEG
   const particle = Bodies.circle(0, 0, mToPx(0.04), {
     label: 'particle',
@@ -377,7 +390,7 @@ function chargedParticle(
   }
 }
 
-function rotatingFrame(p: Extract<SimParams, { kind: 'rotating_frame' }>): BuiltScene {
+function rotatingFrame(p: Extract<SimParams, { kind: 'rotating_frame' }>): OpenScene {
   const th = p.angle_deg * DEG
   const particle = Bodies.circle(mToPx(p.r0_m), 0, mToPx(0.04), {
     label: 'particle',
@@ -407,7 +420,7 @@ function rotatingFrame(p: Extract<SimParams, { kind: 'rotating_frame' }>): Built
 
 function angularMomentumPoint(
   p: Extract<SimParams, { kind: 'angular_momentum_point' }>,
-): BuiltScene {
+): OpenScene {
   // The particle travels horizontally along a line offset from the origin by
   // the impact parameter. The origin is the whole point, so it gets a marker.
   const origin = Bodies.circle(0, 0, 5, { isStatic: true, label: 'pivot' })
@@ -433,7 +446,74 @@ function angularMomentumPoint(
   }
 }
 
+/**
+ * Wall the scene in.
+ *
+ * Every problem used to run on an effectively infinite floor: a ball that was
+ * pushed kept rolling, the camera panned after it, and the demo sat in the same
+ * constant state forever with nothing in view. The walls sit just outside the
+ * framing box, so everything a hand throws comes back into the picture, and
+ * the renderer draws the same rectangle so the limit is never a surprise.
+ *
+ * Walls are static scenery: never interactable, never the focus, and skipped by
+ * the picker. Restitution is a pair MAXIMUM in Matter, so a 0.6 wall bounces a
+ * zero-restitution cart back and leaves a perfectly elastic particle elastic.
+ */
+function enclose(scene: OpenScene, params: SimParams): BuiltScene {
+  const v = scene.view
+  const bounds: ViewBox = {
+    minX_m: v.minX_m - BORDER_PAD_M,
+    maxX_m: v.maxX_m + BORDER_PAD_M,
+    minY_m: v.minY_m - BORDER_PAD_M,
+    maxY_m: v.maxY_m + BORDER_PAD_M,
+  }
+  // The pendulum bob is placed by its integrated angle every step (see
+  // corrections.ts), so a wall cannot stop it — it would just tunnel through
+  // and jitter. Its ceiling is the full swing circle instead, which the bob
+  // cannot leave anyway.
+  if (params.kind === 'pendulum') {
+    bounds.maxY_m = Math.max(bounds.maxY_m, 2 * params.length_m + 0.3 + BORDER_PAD_M)
+  }
+
+  const t = GROUND_THICKNESS_PX
+  const x0 = mToPx(bounds.minX_m)
+  const x1 = mToPx(bounds.maxX_m)
+  const y0 = -mToPx(bounds.maxY_m) // top, Matter y-down
+  const y1 = -mToPx(bounds.minY_m) // bottom
+  const w = x1 - x0
+  const h = y1 - y0
+  const mk = (x: number, y: number, ww: number, hh: number, label: string): Matter.Body =>
+    Bodies.rectangle(x, y, ww, hh, {
+      isStatic: true,
+      friction: 0,
+      frictionStatic: 0,
+      restitution: 0.6,
+      label,
+    })
+  const walls: Record<string, Matter.Body> = {
+    wall_left: mk(x0 - t / 2, (y0 + y1) / 2, t, h + 2 * t, 'wall_left'),
+    wall_right: mk(x1 + t / 2, (y0 + y1) / 2, t, h + 2 * t, 'wall_right'),
+    wall_top: mk((x0 + x1) / 2, y0 - t / 2, w + 2 * t, t, 'wall_top'),
+  }
+  // Scenes with a floor already have their bottom edge; the gravity-free
+  // particle scenes have nothing below and get one.
+  if (!scene.byId['ground']) {
+    walls['wall_bottom'] = mk((x0 + x1) / 2, y1 + t / 2, w + 2 * t, t, 'wall_bottom')
+  }
+
+  return {
+    ...scene,
+    bodies: [...scene.bodies, ...Object.values(walls)],
+    byId: { ...scene.byId, ...walls },
+    bounds,
+  }
+}
+
 export function buildScene(params: SimParams): BuiltScene {
+  return enclose(buildOpenScene(params), params)
+}
+
+function buildOpenScene(params: SimParams): OpenScene {
   switch (params.kind) {
     case 'projectile':
       return projectile(params)

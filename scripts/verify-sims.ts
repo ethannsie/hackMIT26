@@ -389,11 +389,13 @@ console.log('\nANGULAR MOMENTUM ABOUT A POINT  straight-line motion, L must be n
   const expectedL = answer(s, 'angular_momentum_kgm2s')
 
   // Recompute L = m(r x v) directly from the sim state at intervals. Nothing is
-  // rotating, so this is the claim that needs evidence.
+  // rotating, so this is the claim that needs evidence. 2.5 s keeps the
+  // particle on its straight line: the scene is walled in, and a bounce off the
+  // border reverses v, which is a different (and correct) L.
   const samples: number[] = []
-  for (let i = 0; i < 600; i++) {
+  for (let i = 0; i < 300; i++) {
     w.step()
-    if (i % 100 !== 0) continue
+    if (i % 50 !== 0) continue
     const b = w.state().bodies['particle']!
     const [x, y] = b.position_m
     const [vx, vy] = b.velocity_ms
@@ -403,7 +405,7 @@ console.log('\nANGULAR MOMENTUM ABOUT A POINT  straight-line motion, L must be n
   check('L from sim state (kg·m²/s)', samples[0]!, expectedL, 1)
   const pass = Math.abs(spread / expectedL) < 0.01
   if (!pass) failures++
-  console.log(`  [${pass ? 'PASS' : 'FAIL'}] L constant along a straight line: spread = ${spread.toExponential(2)} over 5 s`)
+  console.log(`  [${pass ? 'PASS' : 'FAIL'}] L constant along a straight line: spread = ${spread.toExponential(2)} over 2.5 s`)
 
   // And L must vanish when the origin sits on the line of motion.
   const onLine = new SimWorld(spec('angular_momentum_point', { mass_kg: 2, v0_ms: 1.5, impact_parameter_m: 0 }))

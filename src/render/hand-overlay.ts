@@ -23,6 +23,44 @@ const SKIN_HIGHLIGHT = '#f3c7a6'
 const SKIN_SHADE = '#c98d6c'
 const OUTLINE = '#9b5d51'
 const HIT = '#ff7b72'
+const HIT_FILL = 'rgba(255, 123, 114, 0.3)'
+const HIT_GLOW = 'rgba(255, 123, 114, 0.9)'
+
+/**
+ * The hand is see-through. It sits between the visitor and the thing they are
+ * trying to grab, so an opaque avatar hides exactly the body they are aiming
+ * at. Drawn opaque onto a scratch layer and then composited at this alpha, so
+ * overlapping strokes do not stack into darker patches.
+ */
+const HAND_ALPHA = 0.5
+
+let layer: HTMLCanvasElement | null = null
+
+/** A scratch canvas matching the target's pixel size and transform. */
+function scratchFor(ctx: CanvasRenderingContext2D): CanvasRenderingContext2D {
+  if (!layer) layer = document.createElement('canvas')
+  const target = ctx.canvas
+  if (layer.width !== target.width || layer.height !== target.height) {
+    layer.width = target.width
+    layer.height = target.height
+  }
+  const lctx = layer.getContext('2d')
+  if (!lctx) throw new Error('2D scratch context unavailable')
+  lctx.setTransform(1, 0, 0, 1, 0, 0)
+  lctx.clearRect(0, 0, layer.width, layer.height)
+  lctx.setTransform(ctx.getTransform())
+  return lctx
+}
+
+/** Composite the scratch layer onto the target at HAND_ALPHA. */
+function blend(ctx: CanvasRenderingContext2D): void {
+  if (!layer) return
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.globalAlpha = HAND_ALPHA
+  ctx.drawImage(layer, 0, 0)
+  ctx.restore()
+}
 
 type Pt = [number, number]
 
@@ -198,21 +236,39 @@ function drawOpenHand(ctx: CanvasRenderingContext2D, points: readonly Pt[], palm
  * plus the direction and size of the shove it is about to give (from the
  * fist's velocity). Drawn under the hand so the fist sits on top of it.
  */
-function drawHitbox(ctx: CanvasRenderingContext2D, hand: HandFrame, palm: Pt, map: (p: Vec3) => Pt): void {
+function hitboxRadiusPx(hand: HandFrame, palm: Pt, map: (p: Vec3) => Pt): number {
   const reach = fistReachM(hand)
   const edge = map({ x: hand.palm_m.x + reach, y: hand.palm_m.y, z: hand.palm_m.z })
-  const radius = Math.hypot(edge[0] - palm[0], edge[1] - palm[1])
+  return Math.hypot(edge[0] - palm[0], edge[1] - palm[1])
+}
 
+/** The filled disc of the hitbox, under the hand. */
+function drawHitboxFill(ctx: CanvasRenderingContext2D, palm: Pt, radius: number): void {
   ctx.save()
-  ctx.strokeStyle = HIT
-  ctx.fillStyle = 'rgba(255, 123, 114, 0.12)'
-  ctx.lineWidth = 2.5
-  ctx.setLineDash([8, 6])
+  ctx.fillStyle = HIT_FILL
   ctx.beginPath()
   ctx.arc(palm[0], palm[1], radius, 0, Math.PI * 2)
   ctx.fill()
+  ctx.restore()
+}
+
+/**
+ * The hitbox ring and the shove arrow, over the hand: a fat glowing outline
+ * that stays visible on any body colour and on the translucent fist itself.
+ */
+function drawHitbox(ctx: CanvasRenderingContext2D, hand: HandFrame, palm: Pt, radius: number, map: (p: Vec3) => Pt): void {
+  ctx.save()
+  ctx.strokeStyle = HIT
+  ctx.lineWidth = 4
+  ctx.shadowColor = HIT_GLOW
+  ctx.shadowBlur = 16
+  ctx.setLineDash([14, 8])
+  ctx.beginPath()
+  ctx.arc(palm[0], palm[1], radius, 0, Math.PI * 2)
   ctx.stroke()
+  ctx.stroke() // twice: the glow builds up, the dashes stay crisp
   ctx.setLineDash([])
+  ctx.shadowBlur = 0
 
   const vx = hand.palm_velocity_ms.x
   const vy = hand.palm_velocity_ms.y
@@ -229,8 +285,10 @@ function drawHitbox(ctx: CanvasRenderingContext2D, hand: HandFrame, palm: Pt, ma
       const uy = dy / len
       ctx.strokeStyle = HIT
       ctx.fillStyle = HIT
-      ctx.lineWidth = 4
+      ctx.lineWidth = 5
       ctx.lineCap = 'round'
+      ctx.shadowColor = HIT_GLOW
+      ctx.shadowBlur = 10
       ctx.beginPath()
       ctx.moveTo(palm[0], palm[1])
       ctx.lineTo(tip[0] - ux * 10, tip[1] - uy * 10)
@@ -257,17 +315,19 @@ export function drawHandOverlay(
   const fisted = (hand.fist ?? 0) >= FIST_CLOSE
 
   ctx.save()
+  const radius = fisted ? hitboxRadiusPx(hand, palm, map) : 0
+  if (fisted) drawHitboxFill(ctx, palm, radius)
+
+  // The hand itself goes onto the scratch layer and comes back see-through.
   if (points.length >= 21) {
     const palmPx = Math.hypot(points[5]![0] - points[17]![0], points[5]![1] - points[17]![1])
-    if (fisted) {
-      drawHitbox(ctx, hand, palm, map)
-      drawFist(ctx, points, palmPx)
-    } else {
-      drawOpenHand(ctx, points, palmPx, hand)
-    }
-  } else if (fisted) {
-    drawHitbox(ctx, hand, palm, map)
+    const hctx = scratchFor(ctx)
+    if (fisted) drawFist(hctx, points, palmPx)
+    else drawOpenHand(hctx, points, palmPx, hand)
+    blend(ctx)
   }
+
+  if (fisted) drawHitbox(ctx, hand, palm, radius, map)
 
   ctx.fillStyle = fisted ? HIT : '#ff9ecb'
   ctx.font = '600 11px ui-monospace, monospace'

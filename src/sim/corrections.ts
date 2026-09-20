@@ -191,7 +191,19 @@ function collisionImpulse(
     resolved = true
   }
 
+  // Re-arm once the carts separate. With the scene walled in they bounce
+  // back and meet again, and every meeting deserves the exact impulse rather
+  // than Matter's zero-restitution stick.
+  const onEnd = (e: Matter.IEventCollision<Matter.Engine>): void => {
+    const apart = e.pairs.some(
+      (pair) =>
+        (pair.bodyA === c1 && pair.bodyB === c2) || (pair.bodyA === c2 && pair.bodyB === c1),
+    )
+    if (apart) resolved = false
+  }
+
   Events.on(engine, 'collisionStart', onStart)
+  Events.on(engine, 'collisionEnd', onEnd)
 
   return {
     preStep(): void {
@@ -201,6 +213,7 @@ function collisionImpulse(
     },
     dispose(): void {
       Events.off(engine, 'collisionStart', onStart)
+      Events.off(engine, 'collisionEnd', onEnd)
     },
   }
 }

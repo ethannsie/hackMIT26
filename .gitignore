@@ -10,3 +10,7 @@ captures/
 panel/models/
 hand_landmarker.task
 __pycache__/
+
+# gx10/demo.sh runtime state and the on-box python venv
+.demo/
+.venv/

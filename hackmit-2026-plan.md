@@ -89,7 +89,7 @@ The source of truth is `src/spec/types.ts`, with structured-output schema in `sr
 | Simulation display | ASUS portable monitor | Scene, equations, vectors and graphs |
 | Controller | 7-inch touchscreen | Take a picture, preview, retake and loading/result state |
 | Physics | Matter.js 2D | Existing deterministic solver |
-| Rendering | Existing canvas renderer | three.js dependency exists; 3D rendering is not a demo requirement |
+| Rendering | Existing canvas renderer | 3D rendering is not a demo requirement; no three.js dependency |
 | Tracking | Webcam hand model on GX10 | MediaPipe is the planned adapter; integrate actual tracker with HandSource |
 | Math | KaTeX | Existing derivation panel |
 | Extraction | Ollama on GX10 | Local photo-to-spec model; measured extraction about 28 seconds |

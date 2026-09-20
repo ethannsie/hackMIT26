@@ -44,7 +44,7 @@ export const MAX_SPEED_MS = 60
  * broad phase, so a ball falling at 13 m/s reported itself twice its size
  * and was held 11 cm above the floor.
  */
-function halfExtents(body: Matter.Body): [number, number] {
+export function halfExtents(body: Matter.Body): [number, number] {
   if (body.circleRadius && body.circleRadius > 0) return [body.circleRadius, body.circleRadius]
   let hw = 0
   let hh = 0

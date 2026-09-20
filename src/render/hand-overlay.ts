@@ -308,11 +308,17 @@ export function drawHandOverlay(
   ctx: CanvasRenderingContext2D,
   hand: HandFrame | null,
   map: (point: Vec3) => [number, number],
+  /**
+   * The coupling's latched fist. It has hysteresis (closes at FIST_CLOSE,
+   * opens at FIST_OPEN); reading the raw value here made the avatar flicker
+   * between fist and open hand while the coupling was still pushing.
+   */
+  fistedByCoupling?: boolean,
 ): void {
   if (!hand) return
   const palm = map(hand.palm_m)
   const points = hand.landmarks_m?.map(map) ?? []
-  const fisted = (hand.fist ?? 0) >= FIST_CLOSE
+  const fisted = fistedByCoupling ?? (hand.fist ?? 0) >= FIST_CLOSE
 
   ctx.save()
   const radius = fisted ? hitboxRadiusPx(hand, palm, map) : 0

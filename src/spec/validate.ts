@@ -63,6 +63,28 @@ const RANGES: Partial<Record<keyof SpecGiven, Range>> = {
   impact_parameter_m: { min: -100, max: 100 },
 }
 
+/**
+ * Where one type reads a shared key differently. `launch_angle_deg` is a
+ * projectile's elevation, but for the rotating frame and the charged particle
+ * it is a direction of travel, and clamping "moving left" to 89° would turn a
+ * correctly extracted problem into a wrong one with a repair note attached.
+ * `radius_m` is the rotating frame's starting radius, which may be zero.
+ */
+const TYPE_RANGES: Partial<Record<ProblemType, Partial<Record<keyof SpecGiven, Range>>>> = {
+  rotating_frame: {
+    launch_angle_deg: { min: -180, max: 180 },
+    radius_m: { min: 0, max: 50 },
+  },
+  charged_particle_magnetic: {
+    launch_angle_deg: { min: -180, max: 180 },
+  },
+}
+
+function rangeFor(key: keyof SpecGiven, type: unknown): Range {
+  const override = typeof type === 'string' ? TYPE_RANGES[type as ProblemType]?.[key] : undefined
+  return override ?? RANGES[key]!
+}
+
 /** Fields without which a given problem type cannot be simulated at all. */
 const REQUIRED_BY_TYPE: Record<ProblemType, (keyof SpecGiven)[]> = {
   projectile: ['v0_ms', 'launch_angle_deg'],
@@ -120,7 +142,7 @@ export function validateSpec(raw: unknown): ValidationResult {
       ;(given[key] as number | null) = null
       continue
     }
-    const range = RANGES[key]!
+    const range = rangeFor(key, problem_type)
     if (v < range.min || v > range.max) {
       const clamped = Math.min(range.max, Math.max(range.min, v))
       repairs.push(`given.${key} = ${v} outside [${range.min}, ${range.max}]; clamped to ${clamped}`)

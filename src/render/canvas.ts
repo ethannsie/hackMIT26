@@ -25,6 +25,8 @@ export interface DrawOptions {
   forces: ForceVector[]
   showForces: boolean
   hand: HandFrame | null
+  /** The coupling's latched fist, so the avatar matches what is pushing. */
+  fisted?: boolean
 }
 
 const COLORS = {
@@ -62,11 +64,6 @@ export class CanvasView {
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('2D canvas context unavailable')
     this.ctx = ctx
-  }
-
-  /** Screen px per metre — the mock hand needs this to match the view's scale. */
-  get pixelsPerMetre(): number {
-    return this.scale * mToPx(1)
   }
 
   toScene(clientX: number, clientY: number): [number, number] {
@@ -622,7 +619,7 @@ export class CanvasView {
     drawHandOverlay(ctx, opts.hand, (point) => [
       this.sx(mToPx(point.x)),
       this.sy(-mToPx(point.y)),
-    ])
+    ], opts.fisted)
 
     // Hand contact is deliberately drawn after the avatar so the bright ring
     // stays visible when the palm overlaps it.

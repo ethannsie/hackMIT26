@@ -8,7 +8,7 @@
  * anything above the ground has NEGATIVE y. Readouts flip the sign back.
  */
 import Matter from 'matter-js'
-import { mToPx, msToMatterVel, DEG } from './units.ts'
+import { mToPx, pxToM, msToMatterVel, DEG } from './units.ts'
 import type { SimParams } from './params.ts'
 
 const { Bodies, Body, Composite, Constraint } = Matter
@@ -131,6 +131,16 @@ function projectile(p: Extract<SimParams, { kind: 'projectile' }>): OpenScene {
   }
 }
 
+/**
+ * How far the incline surface continues above the stated top, in px. The
+ * block starts at the top of the stated length, so it needs surface behind it
+ * to rest on; corrections.ts uses the same number so friction still acts on a
+ * block that a hand has pushed back up onto that stretch.
+ */
+export function rampExtensionPx(rampLengthPx: number): number {
+  return Math.max(rampLengthPx * 0.08, mToPx(0.08))
+}
+
 function inclinedPlane(p: Extract<SimParams, { kind: 'inclined_plane' }>): OpenScene {
   const th = p.angle_deg * DEG
   const L = mToPx(p.ramp_length_m)
@@ -147,28 +157,40 @@ function inclinedPlane(p: Extract<SimParams, { kind: 'inclined_plane' }>): OpenS
   const down = { x: Math.cos(th), y: Math.sin(th) }
   const normal = { x: Math.sin(th), y: -Math.cos(th) }
 
+  const size = mToPx(0.08)
+  const isRolling = p.motion === 'rolling'
+
+  // The body starts with its centre exactly at the top of the L the problem
+  // states, so "time to the bottom" in the derivation is the time the sim
+  // takes. It used to start 8 % of the way down so it would not teeter off the
+  // top corner, which quietly made the sim ~7 % faster than the panel; now the
+  // ramp itself carries on above the top by that much instead, so the body
+  // still rests fully on a surface and the travel is the full L.
+  const extra = rampExtensionPx(L)
+  const lift = size / 2 + 1
+  const rampTop = { x: top.x - down.x * extra, y: top.y - down.y * extra }
+
   // Shift the ramp body half a thickness beneath the surface, so the surface
-  // itself (not the body centre) runs through `top` and `bottom`.
+  // itself (not the body centre) runs through `rampTop` and `bottom`.
   const ramp = Bodies.rectangle(
-    (top.x + bottom.x) / 2 - normal.x * (thickness / 2),
-    (top.y + bottom.y) / 2 - normal.y * (thickness / 2),
-    L,
+    (rampTop.x + bottom.x) / 2 - normal.x * (thickness / 2),
+    (rampTop.y + bottom.y) / 2 - normal.y * (thickness / 2),
+    L + extra,
     thickness,
     // friction 0: Coulomb friction is applied explicitly in corrections.ts,
     // because Matter's own friction model pins the block even at mu = 0.05.
     { ...WALL, angle: th, friction: 0, frictionStatic: 0, label: 'ramp' },
   )
 
-  const size = mToPx(0.08)
-  const isRolling = p.motion === 'rolling'
-  // Start a little way down from the very top edge so the body rests fully on
-  // the ramp rather than teetering off the corner.
-  const inset = L * 0.08
-  const lift = size / 2 + 1
-
+  // A sliding box stops when its leading corner meets the floor at the
+  // ramp's foot, which is half a box before its centre gets there. Start it
+  // with its leading edge at the top, so the centre's travel to that moment
+  // is exactly L. A rolling ball touches the floor under its centre, so it
+  // starts centred on the top.
+  const lead = isRolling ? 0 : size / 2
   const start = {
-    x: top.x + down.x * inset + normal.x * lift,
-    y: top.y + down.y * inset + normal.y * lift,
+    x: top.x - down.x * lead + normal.x * lift,
+    y: top.y - down.y * lead + normal.y * lift,
   }
 
   const common = {
@@ -193,6 +215,8 @@ function inclinedPlane(p: Extract<SimParams, { kind: 'inclined_plane' }>): OpenS
   const g = ground()
   const spanX = p.ramp_length_m * Math.cos(th)
   const spanY = p.ramp_length_m * Math.sin(th)
+  const extraX_m = pxToM(extra) * Math.cos(th)
+  const extraY_m = pxToM(extra) * Math.sin(th)
   return {
     bodies: [g, ramp, block],
     constraints: [],
@@ -200,10 +224,10 @@ function inclinedPlane(p: Extract<SimParams, { kind: 'inclined_plane' }>): OpenS
     focusId: 'block',
     interactableIds: ['block'], // the ramp is static; tilting it is a separate gesture
     view: {
-      minX_m: -0.35,
+      minX_m: -0.35 - extraX_m,
       maxX_m: spanX + 0.55,
       minY_m: -0.18,
-      maxY_m: spanY + 0.35,
+      maxY_m: spanY + extraY_m + 0.35,
     },
   }
 }

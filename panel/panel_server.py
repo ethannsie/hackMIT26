@@ -16,6 +16,8 @@ non-stdlib imports in the whole panel are the ones MediaPipe already needs.
 
 Environment:
   PANEL_PORT            8770
+  PANEL_BIND            127.0.0.1   the app runs on the same box; 0.0.0.0 opens the
+                                    scan, hand and SHUTDOWN endpoints to the whole LAN
   PANEL_CAMERA_INDEX    0
   PANEL_CAMERA_WIDTH    1280
   PANEL_CAMERA_HEIGHT   720
@@ -65,6 +67,10 @@ UI_DIR = HERE / "ui"
 REPO = HERE.parent
 
 PORT = int(os.environ.get("PANEL_PORT", "8770"))
+# Loopback by default. Everything that talks to the panel — the app's browser,
+# the kiosk page, demo.sh's health checks — runs on this box, and the API has
+# an unauthenticated poweroff on it. Widen it deliberately, not by default.
+BIND = os.environ.get("PANEL_BIND", "127.0.0.1")
 CAPTURE_DIR = Path(os.environ.get("PANEL_CAPTURE_DIR", REPO / "captures"))
 ALLOW_SHUTDOWN = os.environ.get("PANEL_ALLOW_SHUTDOWN", "1") != "0"
 
@@ -97,23 +103,25 @@ class Hub:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._clients: list[queue.Queue] = []
+        # queue -> the events it does not want. The hand stream is a 30 Hz
+        # landmark feed for the sim; the 240-sample graph snapshots the app
+        # posts a few times a second are for the panel UI, not for it.
+        self._clients: dict[queue.Queue, frozenset[str]] = {}
 
-    def subscribe(self) -> queue.Queue:
+    def subscribe(self, skip: frozenset[str] = frozenset()) -> queue.Queue:
         q: queue.Queue = queue.Queue(maxsize=64)
         with self._lock:
-            self._clients.append(q)
+            self._clients[q] = skip
         return q
 
     def unsubscribe(self, q: queue.Queue) -> None:
         with self._lock:
-            if q in self._clients:
-                self._clients.remove(q)
+            self._clients.pop(q, None)
 
     def publish(self, event: str, data: dict) -> None:
         payload = (event, data)
         with self._lock:
-            clients = list(self._clients)
+            clients = [q for q, skip in self._clients.items() if event not in skip]
         for q in clients:
             try:
                 q.put_nowait(payload)
@@ -253,9 +261,11 @@ class Handler(BaseHTTPRequestHandler):
     # --- helpers -----------------------------------------------------------
 
     def _cors(self) -> None:
-        # The main app is a different origin (vite :5173). This service binds
-        # localhost only and exposes nothing secret, so a blanket allow is the
-        # honest configuration rather than a hole.
+        # The main app is a different origin (vite :5173) on the same host.
+        # With BIND on loopback only pages already running on this box can
+        # reach us, so a blanket allow is the honest configuration; it is the
+        # bind address, not this header, that keeps the shutdown endpoint off
+        # the venue Wi-Fi.
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "content-type")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -481,7 +491,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "nothing captured yet — press 1 first"}, 409)
 
         CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
-        name = f"scan-{datetime.now().strftime('%Y%m%d-%H%M%S')}.jpg"
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        name = f"scan-{stamp}.jpg"
+        # Two saves inside one second must not overwrite each other.
+        n = 1
+        while (CAPTURE_DIR / name).exists():
+            n += 1
+            name = f"scan-{stamp}-{n}.jpg"
         (CAPTURE_DIR / name).write_bytes(pending)
 
         with state.lock:
@@ -498,7 +514,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": True, "file": name, "url": f"/captures/{name}"})
 
     def _sse(self, hand_frames: bool) -> None:
-        q = hub.subscribe()
+        q = hub.subscribe(skip=frozenset({"sim"}) if hand_frames else frozenset())
         try:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -593,9 +609,9 @@ def main() -> None:
     camera.start()
     status = camera.status()
 
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    server = ThreadingHTTPServer((BIND, PORT), Handler)
     server.daemon_threads = True
-    print(f"[panel] http://localhost:{PORT}")
+    print(f"[panel] http://localhost:{PORT}  (bound to {BIND})")
     print(f"[panel]   captures   {CAPTURE_DIR}")
     print(f"[panel]   mediapipe  {'yes' if status['mediapipe'] else 'NO — ' + status['mediapipe_error'][:60]}")
     print(f"[panel]   model      {status['model'] or 'MISSING — run panel/setup.sh'}")

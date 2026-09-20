@@ -56,6 +56,38 @@ app.use('/api/transcribe', express.raw({ type: 'audio/*', limit: '12mb' }))
 
 const corpus = new Corpus(CORPUS_DIR)
 
+/**
+ * Voice is the one feature that needs the internet, and the demo box is
+ * usually without it. Rather than let a visitor talk to a mic that leads
+ * nowhere, the API keeps a fresh answer to "can we reach Deepgram right
+ * now?" and the app disables the mic button when it is no. Checked at boot
+ * and every 30 s, with a 4 s timeout, so a venue Wi-Fi that drops mid-demo
+ * takes the mic with it within half a minute.
+ */
+type VoiceState = 'ready' | 'offline' | 'no-key'
+let voiceState: VoiceState = DEEPGRAM_KEY ? 'offline' : 'no-key'
+async function probeVoice(): Promise<void> {
+  if (!DEEPGRAM_KEY) return
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 4000)
+  try {
+    // Any answer from the host means the route is open; the key is checked
+    // for real on the first transcription.
+    await fetch('https://api.deepgram.com/v1/projects', {
+      method: 'GET',
+      headers: { Authorization: `Token ${DEEPGRAM_KEY}` },
+      signal: controller.signal,
+    })
+    voiceState = 'ready'
+  } catch {
+    voiceState = 'offline'
+  } finally {
+    clearTimeout(timer)
+  }
+}
+void probeVoice()
+setInterval(() => void probeVoice(), 30_000)
+
 const apiKey = process.env['OPENAI_API_KEY']
 const openai = apiKey ? new OpenAI({ apiKey }) : null
 // Ollama ignores the key but the SDK insists on one.
@@ -83,6 +115,8 @@ app.get('/api/health', (_req, res) => {
     local_timeout_ms: LOCAL_URL ? LOCAL_TIMEOUT_MS : null,
     text_model: LOCAL_URL ? TEXT_MODEL : null,
     deepgram: Boolean(DEEPGRAM_KEY),
+    /** 'ready' | 'offline' | 'no-key' — the app's mic button follows this. */
+    voice: voiceState,
     corpus: { books: corpus.books, chunks: corpus.size },
   })
 })
@@ -208,6 +242,10 @@ app.post('/api/transcribe', async (req, res) => {
     res.status(503).json({ error: 'No DEEPGRAM_API_KEY in .env — type the question instead.' })
     return
   }
+  if (voiceState === 'offline') {
+    res.status(503).json({ error: 'Voice needs the internet and the box is offline — type the question instead.' })
+    return
+  }
   const audio = req.body as Buffer
   if (!Buffer.isBuffer(audio) || audio.length < 1000) {
     res.status(400).json({ error: 'body must be the recorded audio (audio/webm)' })
@@ -231,6 +269,8 @@ app.post('/api/transcribe', async (req, res) => {
     const best = data.results?.channels?.[0]?.alternatives?.[0]
     res.json({ text: best?.transcript ?? '', confidence: best?.confidence ?? 0, elapsed_ms: Date.now() - started })
   } catch (err) {
+    // A failed call is the freshest connectivity probe there is.
+    void probeVoice()
     res.status(502).json({ error: `transcription failed: ${(err as Error).message}` })
   }
 })

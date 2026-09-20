@@ -10,7 +10,7 @@
  * The panel's "Ask a question" tile lands on record() too, so the touchscreen
  * can start a recording that plays out on the big screen.
  */
-import { askQuestion, transcribe, type AskContext } from './client.ts'
+import { askQuestion, transcribe, voiceState, type AskContext, type VoiceState } from './client.ts'
 import { Recorder } from './recorder.ts'
 
 /** How long the mic listens, seconds. Long enough for a sentence, short enough that the countdown is the whole UI. */
@@ -25,6 +25,8 @@ export class AskBox {
   private readonly sources: HTMLElement
   private readonly recorder = new Recorder()
   private busy = false
+  /** Follows /api/health: the mic only lights up when Deepgram is reachable. */
+  private voice: VoiceState = 'offline'
 
   constructor(
     root: HTMLElement,
@@ -36,7 +38,7 @@ export class AskBox {
       <h4>Ask about the physics</h4>
       <div class="ask-row">
         <input id="ask-input" type="text" placeholder="e.g. why does the block slow down?" autocomplete="off" />
-        <button id="ask-mic" class="icon-btn" title="Hold on: records ${RECORD_SECONDS} s from the webcam mic">🎤</button>
+        <button id="ask-mic" class="icon-btn" disabled>🎤</button>
         <button id="ask-send" title="Ask (Enter)">Ask</button>
       </div>
       <div id="ask-state" class="ask-state" hidden></div>
@@ -57,6 +59,29 @@ export class AskBox {
       }
     })
     this.micBtn.addEventListener('click', () => void this.record())
+
+    // Online-only by design: the mic is disabled whenever the box cannot
+    // reach the transcription service, so nobody talks into a dead button.
+    void this.refreshVoice()
+    setInterval(() => void this.refreshVoice(), 30_000)
+  }
+
+  private async refreshVoice(): Promise<void> {
+    this.voice = await voiceState()
+    const ready = this.voice === 'ready'
+    this.micBtn.disabled = !ready
+    this.micBtn.title = ready
+      ? `Records ${RECORD_SECONDS} s from the webcam mic`
+      : this.voice === 'no-key'
+        ? 'Voice needs DEEPGRAM_API_KEY in .env — type the question instead'
+        : 'Voice needs the internet and the box is offline — type the question instead'
+  }
+
+  private voiceBlocked(): string | null {
+    if (this.voice === 'ready') return null
+    return this.voice === 'no-key'
+      ? 'voice is off: no Deepgram key on this box — type the question instead'
+      : 'voice is off: the box is offline — type the question instead'
   }
 
   focus(): void {
@@ -93,6 +118,13 @@ export class AskBox {
       this.recorder.stop()
       return
     }
+    const blocked = this.voiceBlocked()
+    if (blocked) {
+      this.showState(blocked, 'warn')
+      this.setStatus(blocked, 'warn')
+      this.focus()
+      return
+    }
     this.answer.hidden = true
     this.sources.hidden = true
     this.micBtn.classList.add('on')
@@ -117,8 +149,8 @@ export class AskBox {
     } finally {
       this.micBtn.classList.remove('on')
       this.micBtn.textContent = '🎤'
-      this.micBtn.title = `Hold on: records ${RECORD_SECONDS} s from the webcam mic`
       this.setBusy(false)
+      void this.refreshVoice()
     }
   }
 

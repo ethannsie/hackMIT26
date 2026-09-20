@@ -71,3 +71,17 @@ export async function transcribe(audio: Blob): Promise<TranscribeResult> {
   if (!res.ok) throw await failure(res)
   return (await res.json()) as TranscribeResult
 }
+
+export type VoiceState = 'ready' | 'offline' | 'no-key'
+
+/** Whether a spoken question can be transcribed right now. */
+export async function voiceState(): Promise<VoiceState> {
+  try {
+    const res = await fetch('/api/health', { cache: 'no-store' })
+    if (!res.ok) return 'offline'
+    const data = (await res.json()) as { voice?: VoiceState }
+    return data.voice ?? 'no-key'
+  } catch {
+    return 'offline'
+  }
+}

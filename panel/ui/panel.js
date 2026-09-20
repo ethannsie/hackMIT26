@@ -18,8 +18,15 @@ const els = {
     home: $('#view-home'),
     scan: $('#view-scan'),
     hand: $('#view-hand'),
+    graphs: $('#view-graphs'),
     system: $('#view-system'),
   },
+  graphsCanvas: $('#graphs-canvas'),
+  graphsScrub: $('#graphs-scrub'),
+  graphsTime: $('#graphs-time'),
+  graphsHint: $('#graphs-hint'),
+  playBtn: $('#btn-play'),
+  playLabel: $('#play-label'),
   homeHandSub: $('#home-hand-sub'),
   homeSaved: $('#home-saved'),
   scanLive: $('#scan-live'),
@@ -72,6 +79,10 @@ function connect() {
   });
 
   source.addEventListener('state', (e) => render(JSON.parse(e.data)));
+  source.addEventListener('sim', (e) => {
+    sim = JSON.parse(e.data);
+    if (state?.view === 'graphs') renderGraphs();
+  });
   source.addEventListener('scan:captured', (e) => {
     const data = JSON.parse(e.data);
     flash();
@@ -96,7 +107,17 @@ function setLink(up) {
 
 // --- rendering -------------------------------------------------------------
 
+let bootId = null;
+
 function render(next) {
+  // A restarted server means possibly new UI files; this page is the old
+  // ones. Reload once rather than run stale script against a new API.
+  if (bootId && next.boot_id && next.boot_id !== bootId) {
+    location.reload();
+    return;
+  }
+  bootId = next.boot_id ?? bootId;
+
   const previousView = state?.view;
   state = next;
 
@@ -104,6 +125,7 @@ function render(next) {
     el.hidden = name !== state.view;
   }
   if (previousView !== state.view) onViewChange(previousView, state.view);
+  if (state.view === 'graphs') renderGraphs();
 
   // Header.
   els.modeChip.textContent = `mode ${state.app_mode}`;
@@ -242,6 +264,175 @@ document.addEventListener('visibilitychange', () => {
     onViewChange(null, state.view);
   }
 });
+
+// --- graphs ----------------------------------------------------------------
+//
+// The app streams the tracked body's motion samples and its transport state
+// here a few times a second (POST /api/sim/snapshot) while this view is open;
+// the slider and play button go back as POST /api/sim/control. Same plots as
+// the app's own drawer, redrawn for a 1024 px touchscreen.
+
+let sim = null;
+let scrubbing = false;        // finger on the slider: don't move it under them
+let seekTimer = 0;
+let pendingSeek = null;
+
+const SERIES = { x: '#3987e5', y: '#d95926', mag: '#199e70' };
+const CHARTS = [
+  { title: 'Position', unit: 'm', series: [
+    { label: 'x', color: SERIES.x, get: (s) => s.x_m },
+    { label: 'y', color: SERIES.y, get: (s) => s.y_m } ] },
+  { title: 'Velocity', unit: 'm/s', series: [
+    { label: 'vx', color: SERIES.x, get: (s) => s.vx_ms },
+    { label: 'vy', color: SERIES.y, get: (s) => s.vy_ms },
+    { label: '|v|', color: SERIES.mag, get: (s) => Math.hypot(s.vx_ms, s.vy_ms) } ] },
+  { title: 'Acceleration', unit: 'm/s²', series: [
+    { label: 'ax', color: SERIES.x, get: (s) => s.ax_ms2 },
+    { label: 'ay', color: SERIES.y, get: (s) => s.ay_ms2 } ] },
+];
+
+function niceStep(range, target = 3) {
+  if (range <= 0 || !Number.isFinite(range)) return 1;
+  const raw = range / target;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  return (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag;
+}
+function fmt(v) {
+  if (!Number.isFinite(v)) return '—';
+  const a = Math.abs(v);
+  if (a >= 1000) return v.toExponential(1);
+  if (a >= 100) return v.toFixed(0);
+  if (a >= 10) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+function renderGraphs() {
+  const canvas = els.graphsCanvas;
+  const dpr = window.devicePixelRatio || 1;
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  if (!cw || !ch) return;
+  if (canvas.width !== cw * dpr || canvas.height !== ch * dpr) {
+    canvas.width = cw * dpr;
+    canvas.height = ch * dpr;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#12151c';
+  ctx.fillRect(0, 0, cw, ch);
+
+  // Transport row.
+  const frames = sim?.frames ?? 0;
+  els.graphsScrub.max = String(Math.max(0, frames - 1));
+  els.graphsScrub.disabled = !sim || frames < 2;
+  if (!scrubbing && sim) els.graphsScrub.value = String(sim.index ?? 0);
+  els.graphsTime.textContent = `${(sim?.t_s ?? 0).toFixed(2)} s`;
+  els.playLabel.textContent = sim?.running ? '❚❚' : '▶';
+  els.playBtn.disabled = !sim;
+  if (!sim) setHint(els.graphsHint, 'Waiting for the app… open it on the big screen.', 'warn');
+  else if (frames < 2) setHint(els.graphsHint, 'No history yet — run the simulation.');
+  else if (sim.running) setHint(els.graphsHint, `live · ${sim.label} · drag the slider to pause and scrub`, 'ok');
+  else setHint(els.graphsHint, sim.scrubbing ? `paused at frame ${sim.index + 1} of ${frames} · ▶ resumes from here` : `paused · ${frames} frames · drag to scrub`);
+
+  const data = sim?.samples ?? [];
+  if (data.length < 2) {
+    ctx.fillStyle = '#6e7681';
+    ctx.font = '15px ui-sans-serif, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(sim ? 'Run the simulation to plot motion' : 'No data from the app yet', cw / 2, ch / 2);
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  const padL = 54, padR = 34, gap = 12, titleH = 18, axisH = 6;
+  const each = (ch - gap * (CHARTS.length - 1)) / CHARTS.length;
+  const plotH = each - titleH - axisH;
+  const plotW = cw - padL - padR;
+  const t0 = data[0].t_s, t1 = data[data.length - 1].t_s;
+  const tSpan = Math.max(t1 - t0, 1e-6);
+
+  CHARTS.forEach((chart, ci) => {
+    const top = ci * (each + gap);
+    const plotTop = top + titleH;
+    ctx.fillStyle = '#c9d1d9';
+    ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillText(chart.title, padL, top + 12);
+    ctx.fillStyle = '#6e7681';
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.fillText(chart.unit, padL + ctx.measureText(chart.title).width + 30, top + 12);
+
+    let lo = Infinity, hi = -Infinity;
+    for (const s of data) for (const ser of chart.series) {
+      const v = ser.get(s);
+      if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    }
+    if (!Number.isFinite(lo)) { lo = -1; hi = 1; }
+    if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+    const padY = (hi - lo) * 0.12; lo -= padY; hi += padY;
+    const sy = (v) => plotTop + plotH - ((v - lo) / (hi - lo)) * plotH;
+    const sx = (t) => padL + ((t - t0) / tSpan) * plotW;
+
+    const step = niceStep(hi - lo);
+    ctx.strokeStyle = '#1e232c'; ctx.lineWidth = 1;
+    ctx.fillStyle = '#6e7681'; ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'right';
+    for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+      const y = sy(v);
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + plotW, y); ctx.stroke();
+      ctx.fillText(fmt(v), padL - 6, y + 3);
+    }
+    ctx.textAlign = 'left';
+    if (lo < 0 && hi > 0) {
+      ctx.strokeStyle = '#30363d';
+      ctx.beginPath(); ctx.moveTo(padL, sy(0)); ctx.lineTo(padL + plotW, sy(0)); ctx.stroke();
+    }
+
+    for (const ser of chart.series) {
+      ctx.strokeStyle = ser.color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      let started = false;
+      for (const s of data) {
+        const v = ser.get(s);
+        if (!Number.isFinite(v)) continue;
+        const x = sx(s.t_s), y = sy(v);
+        if (started) ctx.lineTo(x, y); else { ctx.moveTo(x, y); started = true; }
+      }
+      ctx.stroke();
+      const last = data[data.length - 1];
+      ctx.fillStyle = ser.color; ctx.font = '600 10px ui-monospace, monospace';
+      ctx.fillText(ser.label, padL + plotW + 5, sy(ser.get(last)) + 3);
+    }
+
+    // Cursor at the sim's current time, so plot and scene agree.
+    if (sim && Number.isFinite(sim.t_s) && sim.t_s >= t0 && sim.t_s <= t1) {
+      const x = sx(sim.t_s);
+      ctx.strokeStyle = 'rgba(77, 163, 255, 0.7)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(x, plotTop); ctx.lineTo(x, plotTop + plotH); ctx.stroke();
+    }
+  });
+}
+
+function sendSeek(index) {
+  pendingSeek = index;
+  if (seekTimer) return;
+  // ~20 Hz is plenty for a slider under a thumb, and keeps the app's
+  // frame-apply from queueing behind touch events.
+  seekTimer = window.setTimeout(() => {
+    seekTimer = 0;
+    const i = pendingSeek; pendingSeek = null;
+    post('/api/sim/control', { action: 'seek', index: i });
+  }, 50);
+}
+
+els.graphsScrub.addEventListener('pointerdown', () => { scrubbing = true; });
+els.graphsScrub.addEventListener('input', () => sendSeek(Number(els.graphsScrub.value)));
+for (const ev of ['pointerup', 'pointercancel']) {
+  els.graphsScrub.addEventListener(ev, () => { scrubbing = false; });
+}
+els.playBtn.addEventListener('click', () => {
+  if (!sim) return;
+  post('/api/sim/control', { action: sim.running ? 'pause' : 'play' });
+});
+window.addEventListener('resize', () => { if (state?.view === 'graphs') renderGraphs(); });
 
 // --- intents ---------------------------------------------------------------
 

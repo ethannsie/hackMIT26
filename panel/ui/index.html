@@ -30,6 +30,11 @@
           <span class="tile-label">Hand tracking</span>
           <span class="tile-sub" id="home-hand-sub">MediaPipe overlay</span>
         </button>
+        <button class="tile" data-go="graphs">
+          <span class="tile-icon">📈</span>
+          <span class="tile-label">Graphs</span>
+          <span class="tile-sub" id="home-graphs-sub">scrub time, see the motion</span>
+        </button>
         <button class="tile danger" data-go="system">
           <span class="tile-icon">⏻</span>
           <span class="tile-label">System</span>
@@ -82,6 +87,20 @@
         </button>
       </div>
       <p class="hint" id="hand-hint">Auto follows the app: on in sandbox, off in problem mode.</p>
+    </section>
+
+    <!-- ---------- graphs ---------- -->
+    <section class="view" id="view-graphs" hidden>
+      <div class="graphs">
+        <canvas id="graphs-canvas"></canvas>
+        <div class="scrub">
+          <button class="act play" id="btn-play"><span class="act-label" id="play-label">❚❚</span></button>
+          <input type="range" id="graphs-scrub" min="0" max="0" value="0" step="1" disabled />
+          <span class="num time" id="graphs-time">0.00 s</span>
+          <button class="act ghost" data-go="home"><span class="act-label">Back</span></button>
+        </div>
+        <p class="hint" id="graphs-hint">Waiting for the app…</p>
+      </div>
     </section>
 
     <!-- ---------- system ---------- -->

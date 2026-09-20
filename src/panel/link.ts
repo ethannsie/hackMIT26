@@ -13,11 +13,21 @@
 /** The panel binds localhost on the demo box; the app runs on the same box. */
 const DEFAULT_BASE = `http://${window.location.hostname}:8770`
 
+/** What the panel's Graphs view can ask the app to do. */
+export interface SimControl {
+  action: 'play' | 'pause' | 'seek'
+  index?: number
+}
+
 export interface PanelEvents {
   /** A scan was saved on the panel. The Blob is the full-quality JPEG. */
   onScan(image: Blob, file: string): void
   /** Connection state changed, for the status line. */
   onLink?(up: boolean): void
+  /** The panel switched views; 'graphs' is the one the app streams to. */
+  onView?(view: string): void
+  /** Transport from the panel's Graphs view: same effect as the app's own controls. */
+  onControl?(cmd: SimControl): void
 }
 
 export class PanelLink {
@@ -25,6 +35,9 @@ export class PanelLink {
   private up = false
   /** Last mode we told the panel, so a reconnect can resend it. */
   private mode: 'problem' | 'sandbox' | null = null
+  /** The panel's current view, from its state events. */
+  view = 'home'
+  private simInFlight = false
 
   constructor(
     private readonly events: PanelEvents,
@@ -51,6 +64,40 @@ export class PanelLink {
       const data = JSON.parse((e as MessageEvent).data) as { file: string; url: string }
       void this.fetchScan(data.url, data.file)
     })
+
+    stream.addEventListener('state', (e) => {
+      const data = JSON.parse((e as MessageEvent).data) as { view?: string }
+      if (typeof data.view === 'string' && data.view !== this.view) {
+        this.view = data.view
+        this.events.onView?.(this.view)
+      }
+    })
+
+    stream.addEventListener('sim:control', (e) => {
+      const cmd = JSON.parse((e as MessageEvent).data) as SimControl
+      if (cmd.action === 'play' || cmd.action === 'pause' || cmd.action === 'seek') {
+        this.events.onControl?.(cmd)
+      }
+    })
+  }
+
+  /**
+   * Motion samples + transport state for the panel's Graphs view. Fire and
+   * forget, one request in flight at a time: a slow panel drops snapshots
+   * rather than queueing them, and the next one carries the newer state.
+   */
+  sendSim(payload: unknown): void {
+    if (!this.up || this.simInFlight) return
+    this.simInFlight = true
+    fetch(`${this.base}/api/sim/snapshot`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .catch(() => undefined)
+      .finally(() => {
+        this.simInFlight = false
+      })
   }
 
   disconnect(): void {

@@ -10,6 +10,7 @@ Three things, each one button from the home screen:
 |---|---|
 | **Scan image** | live preview, **1** captures or recaptures, **2** saves. The saved photo goes straight to the solver |
 | **Hand tracking** | the MediaPipe overlay. Follows the app into sandbox by default, or pin it on at any time |
+| **Graphs** | the app's position / velocity / acceleration plots for the tracked body, with a thumb-sized scrubber and play/pause. Dragging pauses the sim on the big screen and scrubs it; ▶ resumes from there |
 | **System** | hold 2 s to power the box off |
 
 ```bash
@@ -55,7 +56,7 @@ extra wheel is a thing that can fail to build the night before a demo.
         └─────────────────────────────────┘
 ```
 
-Two links, both optional in both directions:
+Three links, all optional in both directions:
 
 - **`mode`** — the app POSTs `problem` / `sandbox` whenever it switches. The
   panel uses it for the auto hand overlay.
@@ -63,6 +64,11 @@ Two links, both optional in both directions:
   JPEG and runs it through the same `ingestImage` path as the file picker:
   compress, `/api/extract`, validate, simulate. Pressing **2** on the panel
   therefore solves a problem on the big screen.
+- **`sim` / `sim:control`** — while the panel shows Graphs, the app streams
+  the tracked body's motion samples and transport state a few times a second;
+  the panel's slider and play button go back as commands. The app applies
+  them through the same code as its own controls, so the two screens can
+  never disagree about time.
 - **`/api/hand/events`** — SSE of `HandFrame`s: `palm_n`/`landmarks_n` as
   fractions of the camera frame plus the legacy metre fields.
   `src/hand/remote.ts` implements `HandSource` over it and maps the fractions
@@ -89,6 +95,21 @@ open, or the app is in sandbox consuming frames. The capture loop always runs;
 the landmarker is what gets switched, because a 27B vision model and a hand
 tracker on the same box is the combination that drops frames.
 
+## Gestures
+
+Two, and an open hand is neither:
+
+| | | |
+|---|---|---|
+| **pinch** | thumb tip to index tip | grabs the nearest body, carries it, throws it on release |
+| **fist** | four fingers curled | pushes: bodies bounce off the fist, and a *moving* fist adds a force along its travel. A fist held still does nothing. The big screen draws the fist as a solid hand with a dashed **hitbox** circle (the exact reach the coupling uses) and an arrow for the shove it is about to give |
+
+Earlier, any hand that looked close to the camera counted as "through the
+plane" and pushed on every movement. Now only a fist pushes, and only while
+it moves, so waving a hand across the scene disturbs nothing. Landmarks are
+One Euro filtered before any of this is computed, so a stationary hand reads
+as stationary.
+
 ## The ring light
 
 The white ring on the ESP32 lights the page while the panel is in the scan
@@ -108,6 +129,8 @@ logs one line and carries on.
 | `GET /api/scan/pending.jpg` · `/latest.jpg` | the frozen frame · the last save |
 | `POST /api/mode` · `/api/hand/switch` · `/api/view` | `{mode}` · `{switch}` · `{view}` |
 | `GET /api/hand/events` · `/api/hand/latest` | landmarks in sim coordinates |
+| `POST /api/sim/snapshot` · SSE `sim` | app → panel, ~4 Hz while the Graphs view is open: `{t_s, running, frames, index, scrubbing, label, samples[]}` |
+| `POST /api/sim/control` · SSE `sim:control` | panel → app: `{action: play\|pause\|seek, index?}` — applied exactly like the app's own play button and slider |
 | `POST /api/system/shutdown` | needs `{"confirm": true}` |
 
 The server holds the state and the UI only renders what it is sent, so the
@@ -125,6 +148,8 @@ reloaded panel comes back mid-scan exactly where it was.
 | `PANEL_CAMERA_DYNAMIC_FPS` | `0` | `1` lets the C270's auto-exposure halve the rate in dim light (it does, to 15). Needs `v4l2-ctl` (`v4l-utils`) |
 | `PANEL_SCENE_WIDTH_M` | `1.6` | metres across the frame in the legacy `palm_m` fields. The app now uses `palm_n` (fractions of the frame) mapped onto its own canvas, so this only matters to older consumers |
 | `PANEL_PINCH_CLOSED` / `_OPEN` | `0.2` / `0.8` | thumb-tip to index-tip gap as a fraction of palm width at fully pinched / fully open. The hand view shows the live `gap` to tune against; a grab is 70 % of the way from open to closed |
+| `PANEL_FIST_OPEN` / `_CLOSED` | `1.35` / `0.85` | fingertip-to-wrist over knuckle-to-wrist that counts as extended / curled (open hand ~1.8, relaxed ~1.2, fist ~0.6). Median of four fingers is `fist`; ≥ 0.7 is the push gesture and suppresses pinch. The hand view shows it live |
+| `PANEL_SMOOTH`, `_MIN_CUTOFF`, `_BETA` | `1`, `1.0`, `0.01` | One Euro filter on every landmark: a resting hand stops trembling (`MIN_CUTOFF` Hz), a moving one is not delayed (`BETA` × px/s). `0` disables |
 | `PANEL_CAPTURE_DIR` | `<repo>/captures` | |
 | `PANEL_MODEL` | auto | `hand_landmarker.task`; reuses the repo-root copy if `hand_physics_demo.py` already fetched one |
 | `PANEL_SHUTDOWN_CMD` | `sudo systemctl poweroff` | set to `echo dry-run` while testing |

@@ -93,8 +93,8 @@ header {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
 }
 
 .tile {
@@ -370,3 +370,52 @@ header {
   .tile-label { font-size: 18px; }
   .view { padding: 10px; gap: 9px; }
 }
+
+/* ---------- graphs: the app's motion plots + scrubber, on this screen ---------- */
+.graphs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+#graphs-canvas {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  touch-action: none;
+}
+.scrub {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.scrub .act { flex: 0 0 auto; min-width: 0; padding: 0 22px; }
+.scrub .act.play .act-label { font-size: 22px; }
+.scrub .time { flex: 0 0 86px; text-align: right; font-size: 18px; }
+#graphs-scrub {
+  flex: 1;
+  height: 56px;          /* a thumb a finger can find */
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+#graphs-scrub::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--line);
+}
+#graphs-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 34px;
+  height: 34px;
+  margin-top: -12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid var(--bg);
+}
+#graphs-scrub:disabled::-webkit-slider-thumb { background: var(--muted); }

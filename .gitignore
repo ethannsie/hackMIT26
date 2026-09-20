@@ -18,3 +18,7 @@ __pycache__/
 # ESP32 ring-light credentials (copy secrets.example.h)
 hackmit_camera_light/secrets.h
 hackmit_camera_light/build/
+
+# Textbook corpus for /api/ask: built on the box, not committed (CC BY-NC-SA)
+corpus/*
+!corpus/README.md

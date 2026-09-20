@@ -17,6 +17,7 @@ is not already up and puts the two windows on the right screens:
 | `server/index.ts` | `:8787` | `/api/extract` → localhost Ollama, no OpenAI key |
 | vite | `:5173` | the physics app |
 | Chromium ×2 | | sim full-screen on the big monitor, panel full-screen on the 7 in. touchscreen |
+| `gx10/ble_light.py` | — | relays the retained `hackmit/scanlight` topic to the ring light over **Bluetooth** ([`hackmit_camera_light_ble/`](../hackmit_camera_light_ble/README.md)); no Wi-Fi needed for the light |
 
 **Stop HackMIT Demo** closes it all (Ollama stays up). From a shell the same
 things are `gx10/demo.sh` and `gx10/demo-stop.sh`; logs and pids live in

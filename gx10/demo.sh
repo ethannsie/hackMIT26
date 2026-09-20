@@ -84,6 +84,13 @@ fi
 echo "-- panel (webcam)"
 if listening 8770 /api/state; then echo "   already up"; else start panel "$PY" panel/panel_server.py; fi
 
+# ---- ring light over Bluetooth ----------------------------------------------
+# Relays the retained hackmit/scanlight topic to the BLE ring with the box's
+# own adapter, so the light needs no Wi-Fi at all. Optional: without a ring in
+# range it just keeps looking, and the demo does not wait for it.
+echo "-- ble ring light"
+if pgrep -f "gx10/ble_light.py" >/dev/null; then echo "   already up"; else start ble-light "$PY" gx10/ble_light.py; fi
+
 echo "-- api"
 if listening 8787 /api/health; then echo "   already up"; else start api npx tsx server/index.ts; fi
 

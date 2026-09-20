@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Undo gx10/demo.sh: close both browser windows and the three services.
+# Undo gx10/demo.sh: close both browser windows, the three services and the BLE light bridge.
 # Ollama stays up on purpose — it is a system service and the models are resident.
 set -uo pipefail
 
@@ -7,7 +7,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN="$REPO/.demo"
 
 stopped=0
-for name in hackmit-app hackmit-panel web api panel; do
+for name in hackmit-app hackmit-panel web api panel ble-light; do
   f="$RUN/$name.pid"
   [[ -f "$f" ]] || continue
   pid=$(cat "$f")
@@ -19,6 +19,7 @@ done
 # Anything started by hand that holds the same ports or profiles.
 pkill -f -- "--user-data-dir=$RUN/profile-hackmit-" 2>/dev/null && echo "closed stray browser windows"
 pkill -f "panel/panel_server.py" 2>/dev/null && echo "stopped stray panel"
+pkill -f "gx10/ble_light.py" 2>/dev/null && echo "stopped stray ble light"
 pkill -f "server/index.ts" 2>/dev/null && echo "stopped stray api"
 pkill -f "vite --port 5173" 2>/dev/null && echo "stopped stray web"
 

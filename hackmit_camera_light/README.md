@@ -1,5 +1,10 @@
 # hackmit_camera_light — the ring light on the ESP32-S3
 
+> **Venue Wi-Fi:** this sketch needs the ESP32 on the same Wi-Fi as the GX10 with
+> working mDNS. On `HackMIT.2026` that fails, so the demo ships the Bluetooth
+> variant in [`hackmit_camera_light_ble/`](../hackmit_camera_light_ble/README.md)
+> instead; the panel side is identical.
+
 A 16-pixel NeoPixel ring (data on GPIO 19) on an ESP32-S3 DevKitC. It is
 white while the 7 in. panel is in **Scan image** and off otherwise. The
 panel decides; the ring mirrors. Wiring, in order:

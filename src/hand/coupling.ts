@@ -61,10 +61,15 @@ export function palmRadiusM(hand: HandFrame): number {
   return Math.max(0.03, Math.min(3, (wristToMiddle + knuckleSpan) * 0.34))
 }
 
-/** Fist hitbox radius as a multiple of the palm radius. ~2.2 palms: the fist plus a little air. */
-export const FIST_REACH_PER_PALM = 2.2
-/** Grab reach as a multiple of the palm radius. A pinch has to be nearly on the thing. */
-export const GRAB_REACH_PER_PALM = 1.8
+/**
+ * Fist hitbox radius as a multiple of the palm radius. The drawn fist (the
+ * inflated hull of the landmarks) reaches about 1.3 palm radii from the palm
+ * centre, so at 1.3 the ring sits on the fist's own outline: you hit what
+ * you touch, nothing more.
+ */
+export const FIST_REACH_PER_PALM = 1.3
+/** Grab reach around the fingertip, as a multiple of the palm radius. Fingertip-sized. */
+export const GRAB_REACH_PER_PALM = 1.0
 /** Floors, so a hand seen tiny and far away can still touch something. */
 const MIN_REACH_M = 0.06
 

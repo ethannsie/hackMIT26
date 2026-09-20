@@ -19,6 +19,7 @@ const els = {
     scan: $('#view-scan'),
     hand: $('#view-hand'),
     graphs: $('#view-graphs'),
+    rope: $('#view-rope'),
     system: $('#view-system'),
   },
   graphsCanvas: $('#graphs-canvas'),

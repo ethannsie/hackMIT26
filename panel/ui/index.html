@@ -7,6 +7,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>Physics Panel</title>
     <link rel="stylesheet" href="/panel.css" />
+    <link rel="stylesheet" href="/rope.css" />
   </head>
   <body>
     <header>
@@ -35,6 +36,11 @@
           <span class="tile-label">Graphs</span>
           <span class="tile-sub" id="home-graphs-sub">scrub time, see the motion</span>
         </button>
+        <button class="tile rope" data-go="rope">
+          <span class="tile-icon">✂</span>
+          <span class="tile-label">Cut the Rope</span>
+          <span class="tile-sub">play with your hands</span>
+        </button>
         <button class="tile danger" data-go="system">
           <span class="tile-icon">⏻</span>
           <span class="tile-label">System</span>
@@ -43,6 +49,24 @@
       </div>
       <div class="home-foot">
         <span id="home-saved">no scans yet</span>
+      </div>
+    </section>
+
+    <!-- Game controller; the game itself runs on the main display. -->
+    <section class="view" id="view-rope" hidden>
+      <div class="rope-intro">
+        <div class="eyebrow">LOOK AT THE BIG SCREEN</div>
+        <h1>Cut the Rope</h1>
+        <p>Cut the rope with your hand. Collect the stars. Feed your friend.</p>
+        <div id="rope-stars" aria-label="Collected stars">☆☆☆</div>
+        <p id="rope-status" role="status">Connecting to the main display…</p>
+        <div class="rope-levels" aria-label="Level 1 available; levels 2 through 5 coming soon">
+          <span>01 · The first snip</span><span>02 🔒</span><span>03 🔒</span><span>04 🔒</span><span>05 🔒</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="act ok" id="rope-retry"><span class="act-label">↻ Restart level</span></button>
+        <button class="act ghost" data-go="home"><span class="act-label">Exit game</span></button>
       </div>
     </section>
 
@@ -127,5 +151,6 @@
     <div id="toast" class="toast" hidden></div>
 
     <script src="/panel.js"></script>
+    <script src="/rope.js"></script>
   </body>
 </html>

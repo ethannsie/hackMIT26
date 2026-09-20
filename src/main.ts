@@ -7,6 +7,7 @@
  * elapsed time fed in, never the timestep itself.
  */
 import 'katex/dist/katex.min.css'
+import { RopeMinigame } from './minigames/rope/integration.ts'
 import { SimWorld } from './sim/world.ts'
 import { CanvasView } from './render/canvas.ts'
 import { renderDerivation } from './render/derivation.ts'
@@ -720,6 +721,7 @@ window.addEventListener('keydown', (e) => {
 // --- loop ------------------------------------------------------------------
 
 let lastMs = performance.now()
+const ropeMinigame = new RopeMinigame()
 /** Escapees already announced, so the warning fires on change only. */
 let reportedEscape = ''
 let lastCoupling: CouplingState = {
@@ -733,6 +735,11 @@ let lastCoupling: CouplingState = {
 function frame(nowMs: number): void {
   const raw = nowMs - lastMs
   lastMs = nowMs
+  // Preserve the entire host scene while the isolated minigame owns input.
+  if (ropeMinigame.active) {
+    requestAnimationFrame(frame)
+    return
+  }
   // Cap the delta so returning to a backgrounded tab does not fast-forward.
   const elapsed = Math.min(raw, 100) * speed
 

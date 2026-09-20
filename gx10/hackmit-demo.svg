@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#171b24"/>
+      <stop offset="1" stop-color="#0b0d11"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#bg)" stroke="#232833" stroke-width="2"/>
+  <!-- ground -->
+  <line x1="18" y1="100" x2="110" y2="100" stroke="#3a4150" stroke-width="3" stroke-linecap="round"/>
+  <!-- projectile arc, dashed -->
+  <path d="M24 98 Q 60 6 104 98" fill="none" stroke="#4da3ff" stroke-width="4" stroke-linecap="round" stroke-dasharray="1 9"/>
+  <!-- the ball, at apex -->
+  <circle cx="64" cy="29" r="11" fill="#ffd166"/>
+  <!-- velocity vector -->
+  <line x1="76" y1="29" x2="98" y2="29" stroke="#3fb950" stroke-width="4" stroke-linecap="round"/>
+  <polygon points="98,22 108,29 98,36" fill="#3fb950"/>
+  <!-- play triangle in the corner: this icon starts the demo -->
+  <polygon points="84,74 84,96 102,85" fill="#c9d1d9"/>
+</svg>

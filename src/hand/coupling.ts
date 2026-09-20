@@ -43,25 +43,46 @@ function capSpeed(v: [number, number], max: number): [number, number] {
   return speed > max ? [(v[0] / speed) * max, (v[1] / speed) * max] : v
 }
 
-/** The hand's own size on the sim plane, from its landmarks. */
+/**
+ * The hand's own size on the sim plane, from its landmarks, in scene metres.
+ *
+ * This is the depth cue. The tracker has no range sensor; what it has is how
+ * big the hand looks, and the landmarks arrive already mapped onto the scene,
+ * so a hand near the camera is simply a large hand here and one far away a
+ * small one. Deliberately unclamped (beyond sanity bounds): everything sized
+ * from it — fist hitbox, grab reach, contact glow — then grows and shrinks
+ * with the hand, at any zoom, which is what makes the drawn hitbox honest.
+ */
 export function palmRadiusM(hand: HandFrame): number {
   const points = hand.landmarks_m
-  if (!points || points.length < 18) return 0.12
+  if (!points || points.length < 18) return 0.12 // the mouse mock: no landmarks
   const wristToMiddle = Math.hypot(points[0]!.x - points[9]!.x, points[0]!.y - points[9]!.y)
   const knuckleSpan = Math.hypot(points[5]!.x - points[17]!.x, points[5]!.y - points[17]!.y)
-  return Math.max(0.08, Math.min(0.35, (wristToMiddle + knuckleSpan) * 0.34))
+  return Math.max(0.03, Math.min(3, (wristToMiddle + knuckleSpan) * 0.34))
 }
+
+/** Fist hitbox radius as a multiple of the palm radius. ~2.2 palms: the fist plus a little air. */
+export const FIST_REACH_PER_PALM = 2.2
+/** Grab reach as a multiple of the palm radius. A pinch has to be nearly on the thing. */
+export const GRAB_REACH_PER_PALM = 1.8
+/** Floors, so a hand seen tiny and far away can still touch something. */
+const MIN_REACH_M = 0.06
 
 /**
  * How far from the palm centre a fist reaches, in metres. This is the hitbox:
  * a body whose centre is inside it gets pushed, one outside it is untouched.
- * The overlay draws exactly this circle so the user sees what will be hit.
+ * The overlay draws exactly this circle so the user sees what will be hit —
+ * and because it scales with the hand, a fist brought toward the camera
+ * visibly grows its reach, and one pulled back shrinks it.
  */
 export function fistReachM(hand: HandFrame): number {
-  return Math.max(GRAB_RADIUS_M, palmRadiusM(hand) + 0.16)
+  return Math.max(MIN_REACH_M, palmRadiusM(hand) * FIST_REACH_PER_PALM)
 }
-/** How close the palm must be to a body's centre to push or grab it, in metres. */
-export const GRAB_RADIUS_M = 0.22
+
+/** How close the grab point must be to a body's centre to pinch it, in metres. Same scaling. */
+export function grabReachM(hand: HandFrame): number {
+  return Math.max(MIN_REACH_M, palmRadiusM(hand) * GRAB_REACH_PER_PALM)
+}
 
 /**
  * The minimum a world must expose to be pushed by a hand.
@@ -141,7 +162,7 @@ export class HandCoupling {
       // The index fingertip is the user's precise pointing/grab target. The
       // palm remains the anchor that carries the object after acquisition.
       const [grabX, grabY] = this.grabPoint(hand)
-      const target = this.nearestInteractable(world, grabX, grabY)
+      const target = this.nearestInteractable(world, grabX, grabY, grabReachM(hand))
       if (target) {
         this.grabbedId = target
         return {
@@ -241,8 +262,8 @@ export class HandCoupling {
     }
   }
 
-  /** Nearest pushable body within GRAB_RADIUS_M of the palm, or null. */
-  private nearestInteractable(world: CouplableWorld, x: number, y: number, maxDistance = GRAB_RADIUS_M): string | null {
+  /** Nearest pushable body within `maxDistance` of a point, or null. */
+  private nearestInteractable(world: CouplableWorld, x: number, y: number, maxDistance: number): string | null {
     let best: string | null = null
     let bestDist = maxDistance
 

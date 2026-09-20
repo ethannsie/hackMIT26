@@ -13,6 +13,8 @@ import { solve } from '../src/sim/analytic.ts'
 import { toParams } from '../src/sim/params.ts'
 import { FIXED_DT_S } from '../src/sim/units.ts'
 import { Timeline } from '../src/render/timeline.ts'
+import { fistReachM, grabReachM } from '../src/hand/coupling.ts'
+import type { HandFrame } from '../src/hand/types.ts'
 import type { ProblemSpec, SpecGiven, ProblemType } from '../src/spec/types.ts'
 
 const EMPTY_GIVEN: SpecGiven = {
@@ -524,6 +526,35 @@ console.log('\nTIMELINE  a render loop at any frame rate must keep recording his
     if (!pass) failures++
     console.log(`  [${pass ? 'PASS' : 'FAIL'}] ${fps} fps, first frame ${firstMs} ms: ${w.steps} steps -> ${tl.length} frames`)
   }
+}
+
+console.log('\nHAND REACH  the fist hitbox and grab reach follow the hand\'s apparent size')
+{
+  // A hand nearer the camera is a bigger hand on the scene; the tracker has no
+  // other depth cue. Both radii must scale with it, so a fist brought toward
+  // the camera reaches further and one pulled back reaches less.
+  const handAt = (scale: number): HandFrame => {
+    // A plausible palm: wrist at the origin, middle knuckle 9 cm up, index and
+    // pinky knuckles 8 cm apart — all multiplied by the apparent-size factor.
+    const pts = Array.from({ length: 21 }, () => ({ x: 0, y: 0, z: 0 }))
+    pts[9] = { x: 0, y: 0.09 * scale, z: 0 }
+    pts[5] = { x: -0.04 * scale, y: 0.08 * scale, z: 0 }
+    pts[17] = { x: 0.04 * scale, y: 0.08 * scale, z: 0 }
+    return {
+      t_ms: 0, handedness: 'right', confidence: 1, pinch: 0, fist: 1,
+      palm_m: { x: 0, y: 0, z: 0 }, palm_velocity_ms: { x: 0, y: 0, z: 0 }, landmarks_m: pts,
+    }
+  }
+  const far = fistReachM(handAt(1))
+  const near = fistReachM(handAt(4))
+  const grabFar = grabReachM(handAt(1))
+  const grabNear = grabReachM(handAt(4))
+  check('fist reach, 4x bigger hand', near / far, 4, 1, `(${far.toFixed(3)} m -> ${near.toFixed(3)} m)`)
+  check('grab reach, 4x bigger hand', grabNear / grabFar, 4, 1, `(${grabFar.toFixed(3)} m -> ${grabNear.toFixed(3)} m)`)
+  const tiny = fistReachM(handAt(0.01))
+  const floored = tiny >= 0.06
+  if (!floored) failures++
+  console.log(`  [${floored ? 'PASS' : 'FAIL'}] a hand seen tiny still reaches ${tiny.toFixed(3)} m (floor 0.06)`)
 }
 
 console.log(`\nfixed timestep: ${(FIXED_DT_S * 1000).toFixed(3)} ms (${(1 / FIXED_DT_S).toFixed(0)} Hz)`)

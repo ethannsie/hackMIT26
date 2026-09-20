@@ -1,6 +1,6 @@
 import type { HandFrame, Vec3 } from '../hand/types.ts'
 import { FIST_CLOSE, PINCH_GRAB } from '../hand/types.ts'
-import { fistReachM, PUNCH_MIN_SPEED_M_S } from '../hand/coupling.ts'
+import { fistReachM, grabReachM, PUNCH_MIN_SPEED_M_S } from '../hand/coupling.ts'
 
 const CONNECTIONS: readonly [number, number][] = [
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -25,6 +25,18 @@ const OUTLINE = '#9b5d51'
 const HIT = '#ff7b72'
 const HIT_FILL = 'rgba(255, 123, 114, 0.3)'
 const HIT_GLOW = 'rgba(255, 123, 114, 0.9)'
+const GRAB = '#00e5ff'
+const GRAB_FILL = 'rgba(0, 229, 255, 0.22)'
+const GRAB_GLOW = 'rgba(0, 229, 255, 0.9)'
+
+/** The one ring: which reach it shows, where it sits, and in what colour. */
+interface Ring {
+  centre: Pt
+  radiusPx: number
+  stroke: string
+  fill: string
+  glow: string
+}
 
 /**
  * The hand is see-through. It sits between the visitor and the thing they are
@@ -207,69 +219,89 @@ function drawOpenHand(ctx: CanvasRenderingContext2D, points: readonly Pt[], palm
   ctx.fillStyle = 'rgba(255, 158, 203, 0.22)'
   ctx.fill()
 
-  // Thumb and index rings make the grab gesture readable even when the
-  // fingertip landmark is over a moving body.
-  const thumb = points[4]!
-  const index = points[8]!
-  const grabbing = hand.pinch >= PINCH_GRAB
-  ctx.strokeStyle = grabbing ? '#00e5ff' : '#ffe066'
-  ctx.fillStyle = grabbing ? 'rgba(0, 229, 255, 0.28)' : 'rgba(255, 224, 102, 0.2)'
-  ctx.lineWidth = 3
-  for (const [x, y] of [thumb, index]) {
-    ctx.beginPath()
-    ctx.arc(x, y, 11, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.stroke()
+  // Small markers on the thumb and index tips say "these two pinch". Only
+  // while the hand is open: once it pinches, the grab ring around the
+  // fingertip is the one circle on screen, and these would be a second.
+  if (hand.pinch < PINCH_GRAB) {
+    ctx.strokeStyle = '#ffe066'
+    ctx.fillStyle = 'rgba(255, 224, 102, 0.2)'
+    ctx.lineWidth = 3
+    for (const [x, y] of [points[4]!, points[8]!]) {
+      ctx.beginPath()
+      ctx.arc(x, y, 11, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+    }
   }
-  if (grabbing) {
-    ctx.setLineDash([4, 3])
-    ctx.beginPath()
-    ctx.moveTo(thumb[0], thumb[1])
-    ctx.lineTo(index[0], index[1])
-    ctx.stroke()
-    ctx.setLineDash([])
-  }
+}
+
+/** A scene-metre reach around a scene point, as a screen radius. */
+function reachPx(centre_m: { x: number; y: number; z: number }, reachM: number, map: (p: Vec3) => Pt): number {
+  const c = map(centre_m)
+  const edge = map({ x: centre_m.x + reachM, y: centre_m.y, z: centre_m.z })
+  return Math.hypot(edge[0] - c[0], edge[1] - c[1])
 }
 
 /**
- * The hitbox: the exact circle HandCoupling uses to pick what a fist pushes,
- * plus the direction and size of the shove it is about to give (from the
- * fist's velocity). Drawn under the hand so the fist sits on top of it.
+ * The hitbox — one ring, never two. It is the exact circle HandCoupling
+ * uses: for a fist, the push reach around the palm; for a pinch, the grab
+ * reach around the index fingertip (the grab point). Both scale with the
+ * hand's apparent size, so a hand brought toward the camera grows its ring
+ * and one pulled back shrinks it. An open hand shows none: it touches nothing.
  */
-function hitboxRadiusPx(hand: HandFrame, palm: Pt, map: (p: Vec3) => Pt): number {
-  const reach = fistReachM(hand)
-  const edge = map({ x: hand.palm_m.x + reach, y: hand.palm_m.y, z: hand.palm_m.z })
-  return Math.hypot(edge[0] - palm[0], edge[1] - palm[1])
+function ringFor(hand: HandFrame, fisted: boolean, map: (p: Vec3) => Pt): Ring | null {
+  if (fisted) {
+    return {
+      centre: map(hand.palm_m),
+      radiusPx: reachPx(hand.palm_m, fistReachM(hand), map),
+      stroke: HIT, fill: HIT_FILL, glow: HIT_GLOW,
+    }
+  }
+  if (hand.pinch >= PINCH_GRAB) {
+    const tip = hand.landmarks_m?.[8] ?? hand.palm_m
+    return {
+      centre: map(tip),
+      radiusPx: reachPx(tip, grabReachM(hand), map),
+      stroke: GRAB, fill: GRAB_FILL, glow: GRAB_GLOW,
+    }
+  }
+  return null
 }
 
-/** The filled disc of the hitbox, under the hand. */
-function drawHitboxFill(ctx: CanvasRenderingContext2D, palm: Pt, radius: number): void {
+/** The filled disc of the ring, under the hand. */
+function drawRingFill(ctx: CanvasRenderingContext2D, ring: Ring): void {
   ctx.save()
-  ctx.fillStyle = HIT_FILL
+  ctx.fillStyle = ring.fill
   ctx.beginPath()
-  ctx.arc(palm[0], palm[1], radius, 0, Math.PI * 2)
+  ctx.arc(ring.centre[0], ring.centre[1], ring.radiusPx, 0, Math.PI * 2)
   ctx.fill()
   ctx.restore()
 }
 
 /**
- * The hitbox ring and the shove arrow, over the hand: a fat glowing outline
- * that stays visible on any body colour and on the translucent fist itself.
+ * The ring's outline over the hand — a fat glowing dashed circle that stays
+ * visible on any body colour and on the translucent hand itself — plus, for
+ * a fist, the direction and size of the shove it is about to give.
  */
-function drawHitbox(ctx: CanvasRenderingContext2D, hand: HandFrame, palm: Pt, radius: number, map: (p: Vec3) => Pt): void {
+function drawRing(ctx: CanvasRenderingContext2D, hand: HandFrame, ring: Ring, fisted: boolean, map: (p: Vec3) => Pt): void {
   ctx.save()
-  ctx.strokeStyle = HIT
+  ctx.strokeStyle = ring.stroke
   ctx.lineWidth = 4
-  ctx.shadowColor = HIT_GLOW
+  ctx.shadowColor = ring.glow
   ctx.shadowBlur = 16
   ctx.setLineDash([14, 8])
   ctx.beginPath()
-  ctx.arc(palm[0], palm[1], radius, 0, Math.PI * 2)
+  ctx.arc(ring.centre[0], ring.centre[1], ring.radiusPx, 0, Math.PI * 2)
   ctx.stroke()
   ctx.stroke() // twice: the glow builds up, the dashes stay crisp
   ctx.setLineDash([])
   ctx.shadowBlur = 0
+  if (!fisted) {
+    ctx.restore()
+    return
+  }
 
+  const palm = ring.centre
   const vx = hand.palm_velocity_ms.x
   const vy = hand.palm_velocity_ms.y
   const speed = Math.hypot(vx, vy)
@@ -321,8 +353,8 @@ export function drawHandOverlay(
   const fisted = fistedByCoupling ?? (hand.fist ?? 0) >= FIST_CLOSE
 
   ctx.save()
-  const radius = fisted ? hitboxRadiusPx(hand, palm, map) : 0
-  if (fisted) drawHitboxFill(ctx, palm, radius)
+  const ring = ringFor(hand, fisted, map)
+  if (ring) drawRingFill(ctx, ring)
 
   // The hand itself goes onto the scratch layer and comes back see-through.
   if (points.length >= 21) {
@@ -333,7 +365,7 @@ export function drawHandOverlay(
     blend(ctx)
   }
 
-  if (fisted) drawHitbox(ctx, hand, palm, radius, map)
+  if (ring) drawRing(ctx, hand, ring, fisted, map)
 
   ctx.fillStyle = fisted ? HIT : '#ff9ecb'
   ctx.font = '600 11px ui-monospace, monospace'

@@ -9,6 +9,7 @@
  */
 import Matter from 'matter-js'
 import { mToPx } from '../sim/units.ts'
+import { BORDER_PAD_M, isWallId } from '../sim/builders.ts'
 import type { SimWorld, SimState } from '../sim/world.ts'
 import type { CouplingState } from '../hand/coupling.ts'
 import type { HandFrame } from '../hand/types.ts'
@@ -31,6 +32,8 @@ const COLORS = {
   grid: '#1b1f27',
   ground: '#2a3040',
   static: '#39415a',
+  border: '#4f5b78',
+  outside: 'rgba(0, 0, 0, 0.32)',
   dynamic: '#4da3ff',
   grabbed: '#ffd166',
   velocity: '#5ee6a8',
@@ -95,7 +98,8 @@ export class CanvasView {
   private frame(world: SimWorld, state: SimState): void {
     const v = world.view
     const { clientWidth: cw, clientHeight: ch } = this.canvas
-    const pad = mToPx(0.25)
+    // Room for the border and a little air beyond it on the tight axis.
+    const pad = mToPx(BORDER_PAD_M + 0.1)
 
     const w = mToPx(v.maxX_m - v.minX_m) + pad * 2
     const h = mToPx(v.maxY_m - v.minY_m) + pad * 2
@@ -378,6 +382,44 @@ export class CanvasView {
     }
   }
 
+  /**
+   * The border: the inner face of the walls that keep everything in the scene.
+   * Everything outside it is dimmed so the playable area reads at a glance,
+   * and the line itself is where a thrown body will come back from.
+   */
+  private borderRect(world: SimWorld): [number, number, number, number] {
+    const b = world.bounds
+    const x0 = this.sx(mToPx(b.minX_m))
+    const x1 = this.sx(mToPx(b.maxX_m))
+    const y0 = this.sy(-mToPx(b.maxY_m))
+    const y1 = this.sy(-mToPx(b.minY_m))
+    return [x0, y0, x1, y1]
+  }
+
+  private clipToBorder(world: SimWorld): void {
+    const [x0, y0, x1, y1] = this.borderRect(world)
+    this.ctx.beginPath()
+    this.ctx.rect(x0, y0, x1 - x0, y1 - y0)
+    this.ctx.clip()
+  }
+
+  private drawBorder(world: SimWorld): void {
+    const { ctx } = this
+    const [x0, y0, x1, y1] = this.borderRect(world)
+    const cw = this.canvas.clientWidth
+    const ch = this.canvas.clientHeight
+
+    ctx.fillStyle = COLORS.outside
+    ctx.beginPath()
+    ctx.rect(0, 0, cw, ch)
+    ctx.rect(x0, y0, x1 - x0, y1 - y0)
+    ctx.fill('evenodd')
+
+    ctx.strokeStyle = COLORS.border
+    ctx.lineWidth = 2.5
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0)
+  }
+
   /** Body under a screen point, for click-to-select. */
   pick(world: SimWorld, clientX: number, clientY: number): string | null {
     const rect = this.canvas.getBoundingClientRect()
@@ -388,7 +430,7 @@ export class CanvasView {
     let bestDist = Infinity
     for (const id of world.bodyIds) {
       const body = world.bodyById(id)
-      if (!body || body.label === 'ground') continue
+      if (!body || body.label === 'ground' || isWallId(id)) continue
       const b = body.bounds
       if (x < b.min.x || x > b.max.x || y < b.min.y || y > b.max.y) continue
       const d = Math.hypot(body.position.x - x, body.position.y - y)
@@ -496,8 +538,17 @@ export class CanvasView {
     ctx.fillRect(0, 0, this.canvas.clientWidth, this.canvas.clientHeight)
     this.drawGrid()
 
+    this.drawBorder(world)
+
+    // Bodies are clipped to the border: the floor is built far wider than any
+    // scene so nothing can roll off it, and the part beyond the walls would
+    // otherwise read as more world to explore.
+    ctx.save()
+    this.clipToBorder(world)
     const grabbedBody = coupling.grabbedId ? world.bodyById(coupling.grabbedId) : undefined
     for (const body of Matter.Composite.allBodies(world.engine.world)) {
+      // The walls are drawn as the border line, not as slabs.
+      if (isWallId(body.label)) continue
       const isGrabbed = grabbedBody === body
       const fill = isGrabbed
         ? COLORS.grabbed
@@ -508,6 +559,7 @@ export class CanvasView {
             : COLORS.dynamic
       this.drawBody(body, fill)
     }
+    ctx.restore()
 
     // Paths go over the bodies, not under them: a block sliding down a ramp
     // travels along the ramp's own surface, so a path drawn underneath is

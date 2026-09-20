@@ -131,6 +131,11 @@ export class SimWorld {
     return this.scene.view
   }
 
+  /** The border every body is kept inside, in metres. Drawn by the renderer. */
+  get bounds(): ViewBox {
+    return this.scene.bounds
+  }
+
   /** Bodies that have left the world and been parked. */
   readonly escaped = new Set<string>()
 

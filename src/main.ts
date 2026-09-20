@@ -215,7 +215,49 @@ const panelLink = new PanelLink({
   onLink: (up) => {
     if (up) setStatus('control panel linked — press 1 on the panel to scan')
   },
+  // The panel's Graphs view drives the transport exactly like the keyboard
+  // and the scrub slider here do, so both screens always agree.
+  onControl: (cmd) => {
+    if (cmd.action === 'pause') setRunning(false)
+    else if (cmd.action === 'play') setRunning(true)
+    else if (cmd.action === 'seek' && typeof cmd.index === 'number') {
+      if (running) setRunning(false)
+      const i = Math.max(0, Math.min(timeline.length - 1, Math.round(cmd.index)))
+      if (i >= 0) {
+        scrubEl.value = String(i)
+        applyFrame(i)
+        refreshScrubber()
+      }
+    }
+  },
 })
+
+/** Send the panel what its Graphs view plots, ~4×/s, only while it is open. */
+let lastSimSentAt = 0
+function streamSimToPanel(): void {
+  if (panelLink.view !== 'graphs') return
+  const now = performance.now()
+  if (now - lastSimSentAt < 250) return
+  lastSimSentAt = now
+  const data = recorder.data
+  // 240 points is plenty for a 900 px plot; keep the last one so the cursor
+  // and the newest reading always line up.
+  const stride = Math.max(1, Math.ceil(data.length / 240))
+  const samples: Sample[] = []
+  for (let i = 0; i < data.length; i += stride) samples.push(data[i]!)
+  if (data.length && samples[samples.length - 1] !== data[data.length - 1]) samples.push(data[data.length - 1]!)
+  const n = timeline.length
+  const index = timeline.scrubbing ? timeline.index : Math.max(0, n - 1)
+  panelLink.sendSim({
+    t_s: timeline.current?.t_s ?? 0,
+    running,
+    frames: n,
+    index,
+    scrubbing: timeline.scrubbing,
+    label: recorder.tracked ?? '—',
+    samples,
+  })
+}
 
 // --- problem mode ----------------------------------------------------------
 
@@ -737,6 +779,7 @@ function frame(nowMs: number): void {
     chartTarget.textContent = recorder.tracked ? `· ${label}` : ''
     charts.draw(recorder.data, label)
   }
+  streamSimToPanel()
 
   requestAnimationFrame(frame)
 }

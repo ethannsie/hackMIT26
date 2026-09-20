@@ -30,6 +30,24 @@ export const PUNCH_N_PER_M_S = 40
 export const MAX_PUSH_N = 60
 /** Below this fist speed no force is applied: a fist held still is not a push. */
 export const PUNCH_MIN_SPEED_M_S = 0.05
+
+/** The hand's own size on the sim plane, from its landmarks. */
+export function palmRadiusM(hand: HandFrame): number {
+  const points = hand.landmarks_m
+  if (!points || points.length < 18) return 0.12
+  const wristToMiddle = Math.hypot(points[0]!.x - points[9]!.x, points[0]!.y - points[9]!.y)
+  const knuckleSpan = Math.hypot(points[5]!.x - points[17]!.x, points[5]!.y - points[17]!.y)
+  return Math.max(0.08, Math.min(0.35, (wristToMiddle + knuckleSpan) * 0.34))
+}
+
+/**
+ * How far from the palm centre a fist reaches, in metres. This is the hitbox:
+ * a body whose centre is inside it gets pushed, one outside it is untouched.
+ * The overlay draws exactly this circle so the user sees what will be hit.
+ */
+export function fistReachM(hand: HandFrame): number {
+  return Math.max(GRAB_RADIUS_M, palmRadiusM(hand) + 0.16)
+}
 /** How close the palm must be to a body's centre to push or grab it, in metres. */
 export const GRAB_RADIUS_M = 0.22
 
@@ -126,12 +144,7 @@ export class HandCoupling {
     if (!this.fisted) return IDLE // open hand: free-look, disturbs nothing
 
     const glow = Math.max(0, -hand.palm_m.z)
-    const target = this.nearestInteractable(
-      world,
-      hand.palm_m.x,
-      hand.palm_m.y,
-      Math.max(GRAB_RADIUS_M, this.palmRadiusM(hand) + 0.16),
-    )
+    const target = this.nearestInteractable(world, hand.palm_m.x, hand.palm_m.y, fistReachM(hand))
     if (!target) {
       return { ...IDLE, contact: true, penetration_m: glow, contactPoint_m: [hand.palm_m.x, hand.palm_m.y] }
     }
@@ -164,14 +177,6 @@ export class HandCoupling {
     return indexTip ? [indexTip.x, indexTip.y] : [hand.palm_m.x, hand.palm_m.y]
   }
 
-  private palmRadiusM(hand: HandFrame): number {
-    const points = hand.landmarks_m
-    if (!points || points.length < 18) return 0.12
-    const wristToMiddle = Math.hypot(points[0]!.x - points[9]!.x, points[0]!.y - points[9]!.y)
-    const knuckleSpan = Math.hypot(points[5]!.x - points[17]!.x, points[5]!.y - points[17]!.y)
-    return Math.max(0.08, Math.min(0.35, (wristToMiddle + knuckleSpan) * 0.34))
-  }
-
   private resolvePalmCollision(world: CouplableWorld, id: string, hand: HandFrame): void {
     const body = world.bodyById(id)
     if (!body || body.isStatic) return
@@ -188,7 +193,7 @@ export class HandCoupling {
       pxToM(body.bounds.max.x - body.bounds.min.x),
       pxToM(body.bounds.max.y - body.bounds.min.y),
     ) * 0.5
-    const contactRadius = this.palmRadiusM(hand) + bodyRadius
+    const contactRadius = palmRadiusM(hand) + bodyRadius
     const overlap = contactRadius - distance
     if (overlap <= 0) return
 

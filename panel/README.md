@@ -10,6 +10,7 @@ Three things, each one button from the home screen:
 |---|---|
 | **Scan image** | live preview, **1** captures or recaptures, **2** saves. The saved photo goes straight to the solver |
 | **Hand tracking** | the MediaPipe overlay. Follows the app into sandbox by default, or pin it on at any time |
+| **Graphs** | the app's position / velocity / acceleration plots for the tracked body, with a thumb-sized scrubber and play/pause. Dragging pauses the sim on the big screen and scrubs it; ▶ resumes from there |
 | **System** | hold 2 s to power the box off |
 
 ```bash
@@ -55,7 +56,7 @@ extra wheel is a thing that can fail to build the night before a demo.
         └─────────────────────────────────┘
 ```
 
-Two links, both optional in both directions:
+Three links, all optional in both directions:
 
 - **`mode`** — the app POSTs `problem` / `sandbox` whenever it switches. The
   panel uses it for the auto hand overlay.
@@ -63,6 +64,11 @@ Two links, both optional in both directions:
   JPEG and runs it through the same `ingestImage` path as the file picker:
   compress, `/api/extract`, validate, simulate. Pressing **2** on the panel
   therefore solves a problem on the big screen.
+- **`sim` / `sim:control`** — while the panel shows Graphs, the app streams
+  the tracked body's motion samples and transport state a few times a second;
+  the panel's slider and play button go back as commands. The app applies
+  them through the same code as its own controls, so the two screens can
+  never disagree about time.
 - **`/api/hand/events`** — SSE of `HandFrame`s: `palm_n`/`landmarks_n` as
   fractions of the camera frame plus the legacy metre fields.
   `src/hand/remote.ts` implements `HandSource` over it and maps the fractions
@@ -96,7 +102,7 @@ Two, and an open hand is neither:
 | | | |
 |---|---|---|
 | **pinch** | thumb tip to index tip | grabs the nearest body, carries it, throws it on release |
-| **fist** | four fingers curled | pushes: bodies bounce off the fist, and a *moving* fist adds a force along its travel. A fist held still does nothing |
+| **fist** | four fingers curled | pushes: bodies bounce off the fist, and a *moving* fist adds a force along its travel. A fist held still does nothing. The big screen draws the fist as a solid hand with a dashed **hitbox** circle (the exact reach the coupling uses) and an arrow for the shove it is about to give |
 
 Earlier, any hand that looked close to the camera counted as "through the
 plane" and pushed on every movement. Now only a fist pushes, and only while
@@ -123,6 +129,8 @@ logs one line and carries on.
 | `GET /api/scan/pending.jpg` · `/latest.jpg` | the frozen frame · the last save |
 | `POST /api/mode` · `/api/hand/switch` · `/api/view` | `{mode}` · `{switch}` · `{view}` |
 | `GET /api/hand/events` · `/api/hand/latest` | landmarks in sim coordinates |
+| `POST /api/sim/snapshot` · SSE `sim` | app → panel, ~4 Hz while the Graphs view is open: `{t_s, running, frames, index, scrubbing, label, samples[]}` |
+| `POST /api/sim/control` · SSE `sim:control` | panel → app: `{action: play\|pause\|seek, index?}` — applied exactly like the app's own play button and slider |
 | `POST /api/system/shutdown` | needs `{"confirm": true}` |
 
 The server holds the state and the UI only renders what it is sent, so the

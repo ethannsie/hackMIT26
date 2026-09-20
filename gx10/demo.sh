@@ -189,8 +189,11 @@ echo "-- browser ($BROWSER)"
 if (( count >= 2 )); then panel_fs=1; else panel_fs=0; fi
 open_window hackmit-app   "http://localhost:5173" "$big_x" "$big_y" "$big_w" "$big_h" 1 \
   --remote-debugging-port=9222
+# DevTools ports (localhost only): 9222 = sim, 9223 = panel. Both windows can
+# be inspected over ssh — `curl localhost:9223/json` — without a keyboard.
 open_window hackmit-panel "http://localhost:8770" "$small_x" "$small_y" "$small_w" "$small_h" "$panel_fs" \
-  --disable-pinch --overscroll-history-navigation=0 --touch-events=enabled
+  --disable-pinch --overscroll-history-navigation=0 --touch-events=enabled \
+  --remote-debugging-port=9223
 place_window "IRL Physics Sim" "$big_x" "$big_y" "$big_w" "$big_h" 1
 place_window "Physics Panel" "$small_x" "$small_y" "$small_w" "$small_h" "$panel_fs"
 

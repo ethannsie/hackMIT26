@@ -76,6 +76,10 @@ STREAM_FPS = 20.0
 # Captures are the input to a vision model reading printed text, so they are
 # written at full sensor quality. src/extract/compress.ts does the downscaling.
 CAPTURE_QUALITY = 95
+# Changes each time this process starts. The kiosk page compares it against
+# the one it loaded with and reloads itself on a mismatch, so restarting the
+# panel with new UI files never leaves the touchscreen running stale script.
+BOOT_ID = f"{int(time.time())}-{os.getpid()}"
 
 
 def default_shutdown_cmd() -> str:
@@ -138,7 +142,10 @@ class PanelState:
         self.light = light
         self.lock = threading.Lock()
 
-        self.view = "home"                 # home | scan | hand | system
+        self.view = "home"                 # home | scan | hand | graphs | system
+        # Latest motion snapshot from the app (graphs + scrub position), for
+        # the Graphs view. The app only sends these while this view is open.
+        self.sim: Optional[dict] = None
         self.app_mode = "unknown"          # problem | sandbox | unknown
         self.hand_switch = "auto"          # auto | on | off
         self.scan_active = False
@@ -182,6 +189,7 @@ class PanelState:
             },
             "shutdown_allowed": ALLOW_SHUTDOWN,
             "shutting_down": self.shutting_down,
+            "boot_id": BOOT_ID,
             "camera": self.camera.status(),
             "light": self.light.status(),
         }
@@ -333,7 +341,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/view":
             view = str(body.get("view", "home"))
-            if view not in ("home", "scan", "hand", "system"):
+            if view not in ("home", "scan", "hand", "graphs", "system"):
                 return self._json({"error": f"unknown view {view}"}, 400)
             with state.lock:
                 state.view = view
@@ -365,6 +373,31 @@ class Handler(BaseHTTPRequestHandler):
                 state.hand_switch = switch
             state.broadcast()
             return self._json(state.snapshot())
+
+        if path == "/api/sim/snapshot":
+            # App -> panel, a few times a second while the Graphs view is up:
+            # the tracked body's motion samples and where the scrubber is.
+            if not isinstance(body, dict) or not isinstance(body.get("samples"), list):
+                return self._json({"error": "body must be {samples: [...], ...}"}, 400)
+            with state.lock:
+                state.sim = body
+            hub.publish("sim", body)
+            return self._json({"ok": True})
+
+        if path == "/api/sim/control":
+            # Panel UI -> app: transport. The app applies it exactly as its own
+            # play button and scrub slider would.
+            action = str(body.get("action", ""))
+            if action not in ("play", "pause", "seek"):
+                return self._json({"error": f"unknown action {action}"}, 400)
+            cmd: dict = {"action": action}
+            if action == "seek":
+                try:
+                    cmd["index"] = max(0, int(body.get("index", 0)))
+                except (TypeError, ValueError):
+                    return self._json({"error": "seek needs an integer index"}, 400)
+            hub.publish("sim:control", cmd)
+            return self._json({"ok": True})
 
         if path == "/api/scan/start":
             with state.lock:
@@ -474,6 +507,10 @@ class Handler(BaseHTTPRequestHandler):
             self._cors()
             self.end_headers()
             self._send_event("state", state.snapshot())
+            if not hand_frames and state.sim is not None:
+                # A reopened Graphs view gets the last plot at once instead of
+                # a blank canvas until the app's next snapshot.
+                self._send_event("sim", state.sim)
 
             last_hand = 0.0
             while True:

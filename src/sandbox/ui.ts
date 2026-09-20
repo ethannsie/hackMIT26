@@ -14,12 +14,15 @@ import { FIELDS, HINTS, ICONS, LABELS, makeEntity, nextId } from './palette.ts'
 import { ENTITY_KINDS, isStaticKind, type Entity, type EntityKind, type SandboxScene } from './types.ts'
 import { SandboxView } from '../render/sandbox-canvas.ts'
 import type { ForceVector } from '../sim/fbd.ts'
+import { HandCoupling } from '../hand/coupling.ts'
+import type { HandFrame } from '../hand/types.ts'
 
 export class SandboxMode {
   private scene: SandboxScene
   private world: SandboxWorld
   private view: SandboxView
   private tracker = new InvariantTracker()
+  private handCoupling = new HandCoupling()
 
   private armed: EntityKind | null = null
   private selectedId: string | null = null
@@ -187,6 +190,10 @@ export class SandboxMode {
     this.view.fit(this.scene.arena)
   }
 
+  handPoint(clientX: number, clientY: number): [number, number] {
+    return this.view.toScene(clientX, clientY)
+  }
+
   /** Copy the selection, offset so it is visible and immediately selected. */
   duplicateSelection(): void {
     const entity = this.scene.entities.find((x) => x.id === this.selectedId)
@@ -202,13 +209,21 @@ export class SandboxMode {
     this.setStatus(`duplicated ${LABELS[entity.kind]}`)
   }
 
-  frame(elapsedMs: number, running: boolean): void {
+  frame(elapsedMs: number, running: boolean, hand: HandFrame | null = null): void {
+    let couplingState = this.handCoupling.update(this.world, hand)
     if (running && !this.dragging) {
-      this.world.advanceWith(elapsedMs, () => [])
+      this.world.advanceWith(elapsedMs, () => {
+        couplingState = this.handCoupling.update(this.world, hand)
+        return couplingState.force ? [couplingState.force] : []
+      })
+      // Matter integrates after the coupling callback. Reapply the held
+      // position after the batch so gravity cannot pull a grabbed body away.
+      if (couplingState.contact) couplingState = this.handCoupling.update(this.world, hand)
     }
     this.view.draw(this.world, this.selectedId, this.armed, this.cursor, {
       paths: this.lastPaths,
       forces: this.showForces ? this.forcesOnSelection() : [],
+      hand,
     })
     this.renderInvariants(this.tracker.sample(this.world))
 

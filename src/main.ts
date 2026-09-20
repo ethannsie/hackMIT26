@@ -13,6 +13,7 @@ import { renderDerivation } from './render/derivation.ts'
 import { MotionCharts, MotionRecorder } from './render/charts.ts'
 import { HandCoupling, type CouplingState } from './hand/coupling.ts'
 import { MockHandSource } from './hand/mock.ts'
+import { HttpHandSource } from './hand/http.ts'
 import { extractFromImage } from './extract/client.ts'
 import { PRESETS, KNOBS } from './presets.ts'
 import { SandboxMode } from './sandbox/ui.ts'
@@ -22,6 +23,7 @@ import { forcesFor } from './sim/fbd.ts'
 import type { DrawOptions } from './render/canvas.ts'
 import type { Sample } from './render/charts.ts'
 import type { SandboxScene } from './sandbox/types.ts'
+import type { HandFrame } from './hand/types.ts'
 import { CONFIDENCE_FLOOR, PROBLEM_TYPES, type ProblemSpec, type ProblemType } from './spec/types.ts'
 
 const $ = <T extends HTMLElement>(sel: string): T => {
@@ -153,10 +155,15 @@ function refreshHistoryUi(): void {
   historyEl.value = ''
 }
 
-const hand = new MockHandSource({
+const mouseHand = new MockHandSource({
   element: canvas,
   metresPerPixel: 1 / view.pixelsPerMetre,
 })
+const remoteHand = new HttpHandSource(canvas, (clientX, clientY) =>
+  mode === 'sandbox' ? sandbox.handPoint(clientX, clientY) : view.toScene(clientX, clientY),
+)
+const hand = new URLSearchParams(window.location.search).get('hand') === 'mouse' ? mouseHand : remoteHand
+let liveHand: HandFrame | null = null
 
 // --- problem mode ----------------------------------------------------------
 
@@ -289,7 +296,8 @@ function setMode(next: Mode): void {
   }
 
   if (inSandbox) {
-    hand.stop()
+    if (hand === remoteHand) void hand.start()
+    else hand.stop()
     sandbox.start()
     recordFrame()
   } else {
@@ -609,17 +617,30 @@ function frame(nowMs: number): void {
   if (mode === 'sandbox') {
     sandbox.lastPaths = paths
     sandbox.showForces = showForces
-    sandbox.frame(elapsed, running)
+    liveHand = hand.current()
+    sandbox.frame(elapsed, running, liveHand)
     if (running) {
       recordFrame()
       sampleMotion()
     }
   } else {
+    liveHand = hand.current()
+    if (!liveHand) {
+      lastCoupling = {
+        contact: false,
+        penetration_m: 0,
+        grabbedId: null,
+        contactPoint_m: null,
+        force: null,
+      }
+    }
     if (running) {
       world.advanceWith(elapsed, () => {
-        lastCoupling = coupling.update(world, hand.current())
+        liveHand = hand.current()
+        lastCoupling = coupling.update(world, liveHand)
         return lastCoupling.force ? [lastCoupling.force] : []
       })
+      if (lastCoupling.contact) lastCoupling = coupling.update(world, liveHand)
       recordFrame()
       sampleMotion()
     }
@@ -632,6 +653,7 @@ function frame(nowMs: number): void {
       paths,
       forces: showForces && activeState ? forcesFor(world.params, activeState) : [],
       showForces,
+      hand: liveHand,
     }
     view.draw(world, st, lastCoupling, opts)
 

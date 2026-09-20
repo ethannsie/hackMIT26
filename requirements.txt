@@ -1,3 +1,5 @@
 mediapipe>=0.10.14
 opencv-python>=4.9.0
 numpy>=1.26.0
+bleak>=0.22.0
+paho-mqtt>=2.0.0

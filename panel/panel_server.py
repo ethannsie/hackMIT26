@@ -404,6 +404,21 @@ class Handler(BaseHTTPRequestHandler):
             hub.publish("sim", body)
             return self._json({"ok": True})
 
+        if path == "/api/app/generate":
+            # Panel tile -> app: ask the GX10 for a fresh problem. An optional
+            # problem_type narrows it; the app otherwise uses its selected type.
+            cmd = {}
+            if isinstance(body.get("problem_type"), str):
+                cmd["problem_type"] = body["problem_type"]
+            hub.publish("app:generate", cmd)
+            return self._json({"ok": True})
+
+        if path == "/api/app/ask":
+            # Panel tile -> app: start recording a spoken question there (the
+            # mic is the webcam's, and the answer belongs on the big screen).
+            hub.publish("app:ask", {})
+            return self._json({"ok": True})
+
         if path == "/api/sim/control":
             # Panel UI -> app: transport. The app applies it exactly as its own
             # play button and scrub slider would.

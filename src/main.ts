@@ -18,6 +18,8 @@ import { RemoteHandSource } from './hand/remote.ts'
 import { HttpHandSource } from './hand/http.ts'
 import { PanelLink } from './panel/link.ts'
 import { extractFromImage } from './extract/client.ts'
+import { generateProblem } from './ask/client.ts'
+import { AskBox } from './ask/box.ts'
 import { PRESETS, KNOBS } from './presets.ts'
 import { SandboxMode } from './sandbox/ui.ts'
 import { History } from './history.ts'
@@ -41,6 +43,8 @@ const knobsEl = $<HTMLDivElement>('#knobs')
 const typeEl = $<HTMLSelectElement>('#problem-type')
 const statusEl = $<HTMLDivElement>('#status')
 const fileEl = $<HTMLInputElement>('#photo')
+const generateBtn = $<HTMLButtonElement>('#generate')
+const askEl = $<HTMLDivElement>('#ask')
 const sandboxAside = $<HTMLDivElement>('#sandbox-panel')
 const problemAside = $<HTMLDivElement>('#problem-panel')
 const modeEl = $<HTMLSelectElement>('#mode')
@@ -229,6 +233,10 @@ const panelLink = new PanelLink({
   onLink: (up) => {
     if (up) setStatus('control panel linked — press 1 on the panel to scan')
   },
+  // The panel's home tiles: a fresh problem from the local model, and a
+  // spoken question recorded here (the mic is in the webcam on this box).
+  onGenerate: (problemType) => void generateNew(problemType),
+  onAsk: () => void askBox.record(),
   // The panel's Graphs view drives the transport exactly like the keyboard
   // and the scrub slider here do, so both screens always agree.
   onControl: (cmd) => {
@@ -632,6 +640,47 @@ async function ingestImage(file: Blob, origin: string): Promise<void> {
   }
 }
 
+/**
+ * A new problem from the local model. Lands through the same load() as a
+ * photo, so the derivation, the sliders and the timeline all reset the same
+ * way; the status line says what the model chose to write about.
+ */
+let generating = false
+async function generateNew(problemType?: string): Promise<void> {
+  if (generating) return
+  generating = true
+  generateBtn.disabled = true
+  const type = (problemType ?? (mode === 'problem' ? typeEl.value : '')) || undefined
+  setStatus(`writing a new ${type ? type.replace(/_/g, ' ') : ''} problem on the GX10…`, 'warn')
+  try {
+    const result = await generateProblem(type)
+    if (!result.ok || !result.spec) throw new Error(result.errors.join('; ') || 'model returned no problem')
+    if (mode !== 'problem') setMode('problem')
+    remember('before new problem')
+    load(result.spec, result.repairs)
+    setStatus(`new problem: ${result.setting} · ${(result.elapsed_ms / 1000).toFixed(1)} s on the GX10`)
+  } catch (err) {
+    setStatus(`could not generate: ${(err as Error).message}`, 'error')
+  } finally {
+    generating = false
+    generateBtn.disabled = false
+  }
+}
+generateBtn.addEventListener('click', () => void generateNew())
+
+/** The tutor gets the problem on screen and its worked answers as context. */
+const askBox = new AskBox(
+  askEl,
+  () =>
+    mode === 'problem'
+      ? {
+          raw_text: spec.raw_text,
+          solutions: world.state().solutions.map((s) => `${s.quantity} = ${Number(s.value.toFixed(3))} ${s.unit}`),
+        }
+      : { raw_text: 'The visitor is composing their own scene in the sandbox: ramps, balls, springs, pendulums and magnetic fields.' },
+  setStatus,
+)
+
 fileEl.addEventListener('change', async () => {
   const file = fileEl.files?.[0]
   if (!file) return
@@ -708,6 +757,21 @@ window.addEventListener('keydown', (e) => {
       applyFrame(Math.min(timeline.length - 1, timeline.index + 1))
       scrubEl.value = String(timeline.index)
       refreshScrubber()
+      break
+    case 'n':
+    case 'N':
+      e.preventDefault()
+      void generateNew()
+      break
+    case 'a':
+    case 'A':
+      e.preventDefault()
+      askBox.focus()
+      break
+    case 'm':
+    case 'M':
+      e.preventDefault()
+      void askBox.record()
       break
     case '?':
       e.preventDefault()

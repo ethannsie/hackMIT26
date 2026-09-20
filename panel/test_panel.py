@@ -125,6 +125,12 @@ def main() -> int:
     s, _ = req("/api/mode", {"mode": "bogus"})
     check("bad mode rejected", s == 400, s)
 
+    print("\n[app tiles]")
+    s, d = req("/api/app/generate", {"problem_type": "pendulum"})
+    check("generate tile relays", s == 200 and d.get("ok") is True, (s, d))
+    s, d = req("/api/app/ask", {})
+    check("ask tile relays", s == 200 and d.get("ok") is True, (s, d))
+
     print("\n[guards]")
     s, _ = req("/captures/../panel/panel_server.py", raw=True)
     check("path traversal on /captures blocked", s == 404, s)

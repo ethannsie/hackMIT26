@@ -76,6 +76,28 @@
       #status[data-tone=warn] { color: var(--warn); }
       #status[data-tone=error] { color: var(--error); }
 
+      /* ---------- ask box ---------- */
+      .ask { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+      .ask h4 {
+        margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .06em;
+        text-transform: uppercase; color: var(--text-dim);
+      }
+      .ask-row { display: flex; gap: 6px; }
+      .ask-row input {
+        flex: 1; min-width: 0; background: var(--surface-2); color: var(--text);
+        border: 1px solid var(--line); border-radius: var(--radius);
+        padding: 6px 9px; font: inherit; font-size: 12.5px;
+      }
+      .ask-row input::placeholder { color: var(--muted); }
+      .ask-state { margin-top: 7px; font-size: 11.5px; color: var(--text-dim); }
+      .ask-state[data-tone=warn] { color: var(--warn); }
+      .ask-state[data-tone=error] { color: var(--error); }
+      .ask-answer {
+        margin-top: 9px; padding: 10px 12px; font-size: 13.5px; line-height: 1.5;
+        background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius);
+      }
+      .ask-sources { margin-top: 6px; font-size: 10.5px; color: var(--muted); line-height: 1.4; }
+
       /* ---------- stage ---------- */
       main { position: relative; overflow: hidden; min-width: 0; }
       #stage { width: 100%; height: 100%; display: block; cursor: crosshair; }
@@ -247,6 +269,7 @@
       <div class="sep"></div>
       <button id="graphs" title="Motion graphs (G)">Graphs</button>
       <span class="file-wrap"><button type="button">Photo…</button><input id="photo" type="file" accept="image/*" /></span>
+      <button id="generate" title="Have the local model write a new problem of the selected type (N)">✨ New problem</button>
       <button id="help-open" class="icon-btn" title="Keyboard shortcuts (?)">?</button>
       <div id="status"></div>
     </header>
@@ -276,6 +299,7 @@
         <div id="derivation"></div>
       </div>
       <div id="sandbox-panel" hidden></div>
+      <div id="ask" class="ask"></div>
     </aside>
 
     <div id="help" hidden>
@@ -291,6 +315,9 @@
               <dt>G</dt><dd>Motion graphs</dd>
               <dt>V</dt><dd>Free-body diagram</dd>
               <dt>← →</dt><dd>Step through history</dd>
+              <dt>N</dt><dd>New problem from the local model</dd>
+              <dt>A</dt><dd>Ask a question (typed)</dd>
+              <dt>M</dt><dd>Ask by voice (webcam mic)</dd>
               <dt>?</dt><dd>This help</dd>
               <dt>Ctrl/⌘ Z</dt><dd>Roll back</dd>
               <dt>Esc</dt><dd>Close / deselect</dd>

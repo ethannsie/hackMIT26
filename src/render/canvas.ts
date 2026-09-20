@@ -621,40 +621,17 @@ export class CanvasView {
       this.sy(-mToPx(point.y)),
     ], opts.fisted)
 
-    // Hand contact is deliberately drawn after the avatar so the bright ring
-    // stays visible when the palm overlaps it.
-    if (coupling.contactPoint_m) {
+    // The force label on a push. The hitbox itself is the one ring the hand
+    // overlay draws (fist reach or grab reach, scaled with the hand); a second
+    // fixed-size "contact glow" here used to sit inside it and read as a
+    // second, contradicting hitbox.
+    if (coupling.force && coupling.contactPoint_m) {
       const [hx, hy] = coupling.contactPoint_m
-      const px = this.sx(mToPx(hx))
-      const py = this.sy(-mToPx(hy))
-      const handPoints = opts.hand?.landmarks_m
-      const palmScale = handPoints && handPoints.length >= 18
-        ? (
-            Math.hypot(
-              mToPx(handPoints[0]!.x - handPoints[9]!.x),
-              mToPx(handPoints[0]!.y - handPoints[9]!.y),
-            ) +
-            Math.hypot(
-              mToPx(handPoints[5]!.x - handPoints[17]!.x),
-              mToPx(handPoints[5]!.y - handPoints[17]!.y),
-            )
-          ) * 0.34
-        : 32
-      const r = Math.max(28, Math.min(150, palmScale + coupling.penetration_m * 320))
-      ctx.beginPath()
-      ctx.arc(px, py, r, 0, Math.PI * 2)
-      ctx.fillStyle = COLORS.hand
-      ctx.globalAlpha = coupling.contact ? 0.42 : 0.18
-      ctx.fill()
-      ctx.globalAlpha = 1
-      ctx.strokeStyle = COLORS.hand
-      ctx.lineWidth = 3
-      ctx.stroke()
-
-      if (coupling.force) {
-        const [fxN, fyN] = coupling.force.force_n
-        this.drawArrow(px, py, fxN * 1.6, -fyN * 1.6, COLORS.accel, `F = ${Math.hypot(fxN, fyN).toFixed(1)} N`)
-      }
+      const [fxN, fyN] = coupling.force.force_n
+      this.drawArrow(
+        this.sx(mToPx(hx)), this.sy(-mToPx(hy)),
+        fxN * 1.6, -fyN * 1.6, COLORS.accel, `F = ${Math.hypot(fxN, fyN).toFixed(1)} N`,
+      )
     }
 
     // Readout.

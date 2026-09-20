@@ -545,10 +545,10 @@ console.log('\nHAND REACH  the fist hitbox and grab reach follow the hand\'s app
       palm_m: { x: 0, y: 0, z: 0 }, palm_velocity_ms: { x: 0, y: 0, z: 0 }, landmarks_m: pts,
     }
   }
-  const far = fistReachM(handAt(1))
-  const near = fistReachM(handAt(4))
-  const grabFar = grabReachM(handAt(1))
-  const grabNear = grabReachM(handAt(4))
+  const far = fistReachM(handAt(2))
+  const near = fistReachM(handAt(8))
+  const grabFar = grabReachM(handAt(2))
+  const grabNear = grabReachM(handAt(8))
   check('fist reach, 4x bigger hand', near / far, 4, 1, `(${far.toFixed(3)} m -> ${near.toFixed(3)} m)`)
   check('grab reach, 4x bigger hand', grabNear / grabFar, 4, 1, `(${grabFar.toFixed(3)} m -> ${grabNear.toFixed(3)} m)`)
   const tiny = fistReachM(handAt(0.01))

@@ -12,10 +12,13 @@ import type { SandboxWorld } from '../sandbox/world.ts'
 import type { Entity, EntityKind } from '../sandbox/types.ts'
 import { ICONS } from '../sandbox/palette.ts'
 import { FORCE_COLORS, type ForceVector } from '../sim/fbd.ts'
+import type { HandFrame } from '../hand/types.ts'
+import { drawHandOverlay } from './hand-overlay.ts'
 
 export interface SandboxDrawOptions {
   paths: Record<string, { x: number; y: number }[]>
   forces: ForceVector[]
+  hand: HandFrame | null
 }
 
 const COLORS = {
@@ -223,7 +226,7 @@ export class SandboxView {
     selectedId: string | null,
     armed: EntityKind | null,
     cursor: [number, number] | null,
-    opts: SandboxDrawOptions = { paths: {}, forces: [] },
+    opts: SandboxDrawOptions = { paths: {}, forces: [], hand: null },
   ): void {
     this.resize()
     const { ctx } = this
@@ -430,6 +433,11 @@ export class SandboxView {
       ctx.font = '11px ui-monospace, monospace'
       ctx.fillText('click to place · esc to cancel', 12, this.canvas.clientHeight - 14)
     }
+
+    drawHandOverlay(ctx, opts.hand, (point) => [
+      this.sx(mToPx(point.x)),
+      this.sy(-mToPx(point.y)),
+    ])
 
     ctx.fillStyle = COLORS.text
     ctx.font = '12px ui-monospace, monospace'

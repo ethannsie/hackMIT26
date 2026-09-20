@@ -41,6 +41,18 @@ const openai = apiKey ? new OpenAI({ apiKey }) : null
 // Ollama ignores the key but the SDK insists on one.
 const local = LOCAL_URL ? new OpenAI({ baseURL: LOCAL_URL, apiKey: 'ollama' }) : null
 
+interface HandFramePayload {
+  t_ms: number
+  handedness: 'left' | 'right'
+  confidence: number
+  palm: { x: number; y: number; z: number }
+  palm_velocity: { x: number; y: number; z: number }
+  pinch: number
+}
+
+let latestHandFrame: HandFramePayload | null = null
+let latestHandReceivedAt = 0
+
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -50,6 +62,31 @@ app.get('/api/health', (_req, res) => {
     local_model: LOCAL_URL ? LOCAL_MODEL : null,
     local_timeout_ms: LOCAL_URL ? LOCAL_TIMEOUT_MS : null,
   })
+})
+
+app.get('/api/hand/frame', (_req, res) => {
+  res.setHeader('cache-control', 'no-store')
+  res.json(Date.now() - latestHandReceivedAt < 350 ? latestHandFrame : null)
+})
+
+app.post('/api/hand/frame', (req, res) => {
+  const frame = req.body as Partial<HandFramePayload>
+  if (
+    !frame ||
+    typeof frame !== 'object' ||
+    typeof frame.t_ms !== 'number' ||
+    (frame.handedness !== 'left' && frame.handedness !== 'right') ||
+    typeof frame.confidence !== 'number' ||
+    typeof frame.pinch !== 'number' ||
+    !frame.palm ||
+    !frame.palm_velocity
+  ) {
+    res.status(400).json({ error: 'invalid hand frame' })
+    return
+  }
+  latestHandFrame = frame as HandFramePayload
+  latestHandReceivedAt = Date.now()
+  res.status(204).end()
 })
 
 /** The one request shape both backends accept. */

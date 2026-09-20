@@ -2,10 +2,8 @@
 
 Controls
 --------
-* Point with your index finger to move the cyan cursor.
-* Touch the ball with a thumb-index pinch to grab it.
-* Open your hand near the ball and move your palm to push it.
-* Press R to reset the ball, Q or Esc to quit.
+The default mode is a headless hand sensor for the browser physics engine.
+Pass ``--preview`` to show the legacy local ball window as well.
 
 The demo uses MediaPipe only for 2-D hand position.  Add a real depth reading
 to ``depth_at_cursor_mm`` before treating a visual overlap as physical contact.
@@ -14,7 +12,13 @@ to ``depth_at_cursor_mm`` before treating a visual overlap as physical contact.
 from __future__ import annotations
 
 import math
+import json
+import queue
+import sys
+import threading
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -37,6 +41,7 @@ PINCH_RELEASE_RATIO = 0.78
 PINCH_CONFIRM_FRAMES = 2
 RELEASE_CONFIRM_FRAMES = 6
 TRACKING_GRACE_SECONDS = 0.22
+HAND_BRIDGE_URL = "http://localhost:8787/api/hand/frame"
 
 # BGR colors for the virtual hand. Change these if you want another skin tone.
 HAND_FILL_COLOR = (142, 188, 238)  # warm light skin tone in BGR
@@ -99,6 +104,53 @@ class Ball:
             elif self.position[axis] > high:
                 self.position[axis] = high
                 self.velocity[axis] = -abs(self.velocity[axis]) * 0.74
+
+
+class HandBridge:
+    """Publish the latest camera frame without blocking webcam processing."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.frames: queue.Queue[Optional[dict[str, object]]] = queue.Queue(maxsize=1)
+        self.stop_event = threading.Event()
+        self.reported_error = False
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def publish(self, frame: Optional[dict[str, object]]) -> None:
+        if frame is None:
+            return
+        try:
+            self.frames.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            self.frames.put_nowait(frame)
+        except queue.Full:
+            pass
+
+    def _run(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                frame = self.frames.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            request = urllib.request.Request(
+                self.url,
+                data=json.dumps(frame).encode("utf-8"),
+                headers={"content-type": "application/json"},
+                method="POST",
+            )
+            try:
+                urllib.request.urlopen(request, timeout=0.15).close()
+                self.reported_error = False
+            except (urllib.error.URLError, TimeoutError, OSError) as error:
+                if not self.reported_error:
+                    print(f"Hand bridge unavailable at {self.url}: {error}", flush=True)
+                    self.reported_error = True
+
+    def close(self) -> None:
+        self.stop_event.set()
 
 
 class HandInteraction:
@@ -239,15 +291,51 @@ def draw_virtual_hand(frame: np.ndarray, landmarks) -> None:
     cv2.addWeighted(avatar, 0.86, frame, 0.14, 0, frame)
 
 
+def bridge_frame(hand: HandInteraction, width: int, height: int, landmarks) -> Optional[dict[str, object]]:
+    if not hand.hand_visible:
+        return None
+    return {
+        "t_ms": time.monotonic() * 1000,
+        "handedness": "right",
+        "confidence": 1.0,
+        "palm": {
+            "x": float(hand.palm[0] / width),
+            "y": float(hand.palm[1] / height),
+            # Camera-only mode treats a visible palm as touching the sim plane.
+            # Replace this with calibrated ToF depth when the sensor is wired in.
+            "z": -0.05,
+        },
+        "palm_velocity": {
+            "x": float(hand.palm_velocity[0] / width),
+            "y": float(hand.palm_velocity[1] / height),
+            "z": 0.0,
+        },
+        "pinch": 1.0 if hand.is_pinching else 0.0,
+        "landmarks": [
+            {"x": float(landmark.x), "y": float(landmark.y), "z": float(landmark.z)}
+            for landmark in (landmarks or [])
+        ],
+    }
+
+
 def main() -> None:
+    show_preview = "--preview" in sys.argv[1:]
     model_path = require_hand_model()
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         raise RuntimeError("Could not open webcam 0. Try a different camera index in VideoCapture().")
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    # A smaller capture frame leaves MediaPipe more CPU for tracking updates and
+    # avoids processing stale buffered frames when the laptop is busy.
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    if show_preview:
+        print("Camera preview active. Press Q or Esc in the preview window to stop.")
+    else:
+        print("Camera bridge active. View the hand and physics in the browser; press Ctrl+C to stop.")
 
     hand = HandInteraction()
+    bridge = HandBridge(HAND_BRIDGE_URL)
     ball = Ball(np.array([640.0, 360.0]), np.zeros(2, dtype=float))
     grabbed = False
     previous_time = time.monotonic()
@@ -282,6 +370,8 @@ def main() -> None:
             else:
                 hand.clear(dt)
 
+            bridge.publish(bridge_frame(hand, width, height, detected_landmarks))
+
             cursor_distance = float(np.linalg.norm(ball.position - hand.cursor))
             if hand.is_pinching and hand.hand_visible and (grabbed or cursor_distance < ball.radius + 18):
                 grabbed = True
@@ -297,17 +387,19 @@ def main() -> None:
 
             # Reserved for a calibrated ToF reading; don't fake 3-D contact.
             _depth_mm = depth_at_cursor_mm(hand.cursor) if hand.hand_visible else None
-            if detected_landmarks:
-                draw_virtual_hand(frame, detected_landmarks)
-            draw_overlay(frame, ball, hand, grabbed, palm_contact)
-            cv2.imshow("HackMIT Hand Physics Demo", frame)
-            key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), 27):
-                break
-            if key == ord("r"):
-                ball.reset(width, height)
+            if show_preview:
+                if detected_landmarks:
+                    draw_virtual_hand(frame, detected_landmarks)
+                draw_overlay(frame, ball, hand, grabbed, palm_contact)
+                cv2.imshow("HackMIT Hand Physics Demo", frame)
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), 27):
+                    break
+                if key == ord("r"):
+                    ball.reset(width, height)
 
     cap.release()
+    bridge.close()
     cv2.destroyAllWindows()
 
 

@@ -11,6 +11,8 @@ import Matter from 'matter-js'
 import { mToPx } from '../sim/units.ts'
 import type { SimWorld, SimState } from '../sim/world.ts'
 import type { CouplingState } from '../hand/coupling.ts'
+import type { HandFrame } from '../hand/types.ts'
+import { drawHandOverlay } from './hand-overlay.ts'
 import { FORCE_COLORS, type ForceVector } from '../sim/fbd.ts'
 
 export interface DrawOptions {
@@ -21,6 +23,7 @@ export interface DrawOptions {
   /** Forces on the selected body. Empty hides the diagram. */
   forces: ForceVector[]
   showForces: boolean
+  hand: HandFrame | null
 }
 
 const COLORS = {
@@ -32,7 +35,7 @@ const COLORS = {
   grabbed: '#ffd166',
   velocity: '#5ee6a8',
   accel: '#ff7b72',
-  hand: '#ff9ecb',
+  hand: '#00e5ff',
   concept: '#c792ea',
   sweep: '#c792ea',
   text: '#c9d1d9',
@@ -61,6 +64,14 @@ export class CanvasView {
   /** Screen px per metre — the mock hand needs this to match the view's scale. */
   get pixelsPerMetre(): number {
     return this.scale * mToPx(1)
+  }
+
+  toScene(clientX: number, clientY: number): [number, number] {
+    const rect = this.canvas.getBoundingClientRect()
+    return [
+      (clientX - rect.left - this.originX) / this.scale / mToPx(1),
+      -(clientY - rect.top - this.originY) / this.scale / mToPx(1),
+    ]
   }
 
   private resize(): void {
@@ -556,20 +567,39 @@ export class CanvasView {
       if (body) this.drawForces(body, opts.forces)
     }
 
-    // Hand contact.
+    drawHandOverlay(ctx, opts.hand, (point) => [
+      this.sx(mToPx(point.x)),
+      this.sy(-mToPx(point.y)),
+    ])
+
+    // Hand contact is deliberately drawn after the avatar so the bright ring
+    // stays visible when the palm overlaps it.
     if (coupling.contactPoint_m) {
       const [hx, hy] = coupling.contactPoint_m
       const px = this.sx(mToPx(hx))
       const py = this.sy(-mToPx(hy))
-      const r = 10 + coupling.penetration_m * 200
+      const handPoints = opts.hand?.landmarks_m
+      const palmScale = handPoints && handPoints.length >= 18
+        ? (
+            Math.hypot(
+              mToPx(handPoints[0]!.x - handPoints[9]!.x),
+              mToPx(handPoints[0]!.y - handPoints[9]!.y),
+            ) +
+            Math.hypot(
+              mToPx(handPoints[5]!.x - handPoints[17]!.x),
+              mToPx(handPoints[5]!.y - handPoints[17]!.y),
+            )
+          ) * 0.34
+        : 32
+      const r = Math.max(28, Math.min(150, palmScale + coupling.penetration_m * 320))
       ctx.beginPath()
       ctx.arc(px, py, r, 0, Math.PI * 2)
       ctx.fillStyle = COLORS.hand
-      ctx.globalAlpha = coupling.contact ? 0.35 : 0.12
+      ctx.globalAlpha = coupling.contact ? 0.42 : 0.18
       ctx.fill()
       ctx.globalAlpha = 1
       ctx.strokeStyle = COLORS.hand
-      ctx.lineWidth = 2
+      ctx.lineWidth = 3
       ctx.stroke()
 
       if (coupling.force) {

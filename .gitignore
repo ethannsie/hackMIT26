@@ -14,3 +14,7 @@ __pycache__/
 # gx10/demo.sh runtime state and the on-box python venv
 .demo/
 .venv/
+
+# ESP32 ring-light credentials (copy secrets.example.h)
+hackmit_camera_light/secrets.h
+hackmit_camera_light/build/

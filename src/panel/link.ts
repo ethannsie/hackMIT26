@@ -30,8 +30,8 @@ export interface PanelEvents {
   onControl?(cmd: SimControl): void
   /** The panel's "New problem" tile. Undefined type means "any". */
   onGenerate?(problemType?: string): void
-  /** The panel's "Ask a question" tile: start recording here. */
-  onAsk?(): void
+  /** The panel's Ask view: start, stop, or toggle the recording here. */
+  onAsk?(action: 'start' | 'stop' | 'toggle'): void
 }
 
 export class PanelLink {
@@ -81,7 +81,11 @@ export class PanelLink {
       const data = JSON.parse((e as MessageEvent).data) as { problem_type?: unknown }
       this.events.onGenerate?.(typeof data.problem_type === 'string' ? data.problem_type : undefined)
     })
-    stream.addEventListener('app:ask', () => this.events.onAsk?.())
+    stream.addEventListener('app:ask', (e) => {
+      const data = JSON.parse((e as MessageEvent).data) as { action?: unknown }
+      const action = data.action === 'start' || data.action === 'stop' ? data.action : 'toggle'
+      this.events.onAsk?.(action)
+    })
 
     stream.addEventListener('sim:control', (e) => {
       const cmd = JSON.parse((e as MessageEvent).data) as SimControl
@@ -108,6 +112,16 @@ export class PanelLink {
       .finally(() => {
         this.simInFlight = false
       })
+  }
+
+  /** The Ask box's phase, so the panel's Ask view shows the same thing. */
+  sendAsk(payload: unknown): void {
+    if (!this.up) return
+    fetch(`${this.base}/api/ask/state`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).catch(() => undefined)
   }
 
   disconnect(): void {

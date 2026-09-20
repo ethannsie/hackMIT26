@@ -19,9 +19,12 @@ python3 panel/panel_server.py     # http://localhost:8770
 
 Home tiles that act on the big screen rather than here: **New problem**
 (`POST /api/app/generate` → SSE `app:generate` → the app asks the GX10 for a
-fresh problem) and **Ask a question** (`POST /api/app/ask` → SSE `app:ask` →
-the app records 7 s from the webcam mic, transcribes, and answers on the
-monitor). The panel only relays; see the project README, "Generate and Ask".
+fresh problem) and **Ask a question**, which opens the panel's Ask view: its
+button or the keypad's `1` posts `POST /api/app/ask {action: start|stop}` →
+SSE `app:ask` → the app records from the webcam mic, transcribes, answers on
+the monitor, and mirrors every phase back with `POST /api/ask/state` → SSE
+`ask`, which the view renders (LISTENING with a countdown, working, thinking,
+answered). The panel only relays; see the project README, "Generate and Ask".
 panel/launch_panel.sh             # Chromium on the 7in screen, not the big one
 ```
 

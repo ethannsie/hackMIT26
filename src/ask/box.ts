@@ -13,8 +13,20 @@
 import { askQuestion, transcribe, voiceState, type AskContext, type VoiceState } from './client.ts'
 import { Recorder } from './recorder.ts'
 
-/** How long the mic listens, seconds. Long enough for a sentence, short enough that the countdown is the whole UI. */
-const RECORD_SECONDS = 7
+/**
+ * Longest the mic listens, seconds. Press-to-stop is the normal way to end
+ * it; this is the ceiling for a visitor who walks off mid-sentence.
+ */
+const RECORD_SECONDS = 20
+
+/** Where the Ask box is, mirrored to the touchscreen and the on-stage banner. */
+export interface AskPhase {
+  phase: 'idle' | 'listening' | 'transcribing' | 'thinking' | 'answered' | 'error'
+  seconds_left?: number
+  heard?: string
+  answer?: string
+  error?: string
+}
 
 export class AskBox {
   private readonly input: HTMLInputElement
@@ -33,6 +45,8 @@ export class AskBox {
     /** What is on screen right now, sent along with every question. */
     private readonly context: () => AskContext,
     private readonly setStatus: (text: string, tone?: 'ok' | 'warn' | 'error') => void,
+    /** Every phase change, for the panel's Ask view and the banner over the sim. */
+    private readonly onPhase: (p: AskPhase) => void = () => {},
   ) {
     root.innerHTML = `
       <h4>Ask about the physics</h4>
@@ -71,7 +85,7 @@ export class AskBox {
     const ready = this.voice === 'ready'
     this.micBtn.disabled = !ready
     this.micBtn.title = ready
-      ? `Records ${RECORD_SECONDS} s from the webcam mic`
+      ? `Press to start listening, press again to stop (up to ${RECORD_SECONDS} s)`
       : this.voice === 'no-key'
         ? 'Voice needs DEEPGRAM_API_KEY in .env — type the question instead'
         : 'Voice needs the internet and the box is offline — type the question instead'
@@ -93,6 +107,7 @@ export class AskBox {
     if (!question || this.busy) return
     this.input.value = question
     this.setBusy(true, 'thinking…')
+    this.onPhase({ phase: 'thinking', heard: question })
     try {
       const result = await askQuestion(question, this.context())
       this.answer.textContent = result.answer
@@ -104,14 +119,35 @@ export class AskBox {
         this.sources.hidden = true
       }
       this.showState(`answered in ${(result.elapsed_ms / 1000).toFixed(1)} s`)
+      this.onPhase({ phase: 'answered', heard: question, answer: result.answer })
     } catch (err) {
       this.showState((err as Error).message, 'error')
+      this.onPhase({ phase: 'error', heard: question, error: (err as Error).message })
     } finally {
       this.setBusy(false)
     }
   }
 
-  /** Listen, transcribe, then ask. The panel tile calls this. */
+  /** Is the mic open right now? */
+  get listening(): boolean {
+    return this.recorder.recording
+  }
+
+  /** Stop an open recording and go on to transcribe it. No-op otherwise. */
+  stop(): void {
+    if (this.recorder.recording) this.recorder.stop()
+  }
+
+  /** The panel's button: start if idle, stop if listening. */
+  toggle(): void {
+    if (this.recorder.recording) this.stop()
+    else void this.record()
+  }
+
+  /**
+   * Listen until stop() or the ceiling, transcribe, then ask. Press-to-start,
+   * press-to-stop: the mic button, `M`, and the panel's button all land here.
+   */
   async record(): Promise<void> {
     if (this.busy) return
     if (this.recorder.recording) {
@@ -122,6 +158,7 @@ export class AskBox {
     if (blocked) {
       this.showState(blocked, 'warn')
       this.setStatus(blocked, 'warn')
+      this.onPhase({ phase: 'error', error: blocked })
       this.focus()
       return
     }
@@ -129,23 +166,38 @@ export class AskBox {
     this.sources.hidden = true
     this.micBtn.classList.add('on')
     this.micBtn.textContent = '■'
-    this.micBtn.title = 'Stop early'
+    this.micBtn.title = 'Stop and ask'
+    let heardText = ''
     try {
-      const clip = await this.recorder.record(RECORD_SECONDS, (left) => this.showState(`listening… ${left}`, 'warn'))
+      const clip = await this.recorder.record(RECORD_SECONDS, (left) => {
+        this.showState(`listening… press again to stop (${left} s left)`, 'warn')
+        this.onPhase({ phase: 'listening', seconds_left: left })
+      })
       this.micBtn.classList.remove('on')
       this.micBtn.textContent = '🎤'
-      this.setBusy(true, 'transcribing…')
-      const heard = await transcribe(clip.blob)
-      if (!heard.text.trim()) {
-        this.showState('did not catch that — try again, closer to the camera', 'warn')
+      if (clip.seconds < 0.6) {
+        const msg = 'that was too short — press once to start, speak, press again to stop'
+        this.showState(msg, 'warn')
+        this.onPhase({ phase: 'error', error: msg })
         return
       }
-      this.input.value = heard.text
+      this.setBusy(true, 'working out what you said…')
+      this.onPhase({ phase: 'transcribing' })
+      const heard = await transcribe(clip.blob)
+      heardText = heard.text.trim()
+      if (!heardText) {
+        const msg = 'did not catch that — try again, closer to the camera'
+        this.showState(msg, 'warn')
+        this.onPhase({ phase: 'error', error: msg })
+        return
+      }
+      this.input.value = heardText
       this.setBusy(false)
-      await this.ask(heard.text)
+      await this.ask(heardText)
     } catch (err) {
       this.showState((err as Error).message, 'error')
       this.setStatus(`ask: ${(err as Error).message}`, 'error')
+      this.onPhase({ phase: 'error', heard: heardText || undefined, error: (err as Error).message })
     } finally {
       this.micBtn.classList.remove('on')
       this.micBtn.textContent = '🎤'

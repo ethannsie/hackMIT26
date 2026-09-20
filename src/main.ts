@@ -45,6 +45,7 @@ const statusEl = $<HTMLDivElement>('#status')
 const fileEl = $<HTMLInputElement>('#photo')
 const generateBtn = $<HTMLButtonElement>('#generate')
 const askEl = $<HTMLDivElement>('#ask')
+const askBanner = $<HTMLDivElement>('#ask-banner')
 const sandboxAside = $<HTMLDivElement>('#sandbox-panel')
 const problemAside = $<HTMLDivElement>('#problem-panel')
 const modeEl = $<HTMLSelectElement>('#mode')
@@ -236,7 +237,11 @@ const panelLink = new PanelLink({
   // The panel's home tiles: a fresh problem from the local model, and a
   // spoken question recorded here (the mic is in the webcam on this box).
   onGenerate: (problemType) => void generateNew(problemType),
-  onAsk: () => void askBox.record(),
+  onAsk: (action) => {
+    if (action === 'start') void askBox.record()
+    else if (action === 'stop') askBox.stop()
+    else askBox.toggle()
+  },
   // The panel's Graphs view drives the transport exactly like the keyboard
   // and the scrub slider here do, so both screens always agree.
   onControl: (cmd) => {
@@ -679,6 +684,22 @@ const askBox = new AskBox(
         }
       : { raw_text: 'The visitor is composing their own scene in the sandbox: ramps, balls, springs, pendulums and magnetic fields.' },
   setStatus,
+  (p) => {
+    // Mirror every phase to the touchscreen, and put a banner over the sim
+    // so someone looking at the monitor can tell listening from thinking.
+    panelLink.sendAsk(p)
+    const label =
+      p.phase === 'listening' ? `● LISTENING — press again to stop${p.seconds_left !== undefined ? ` · ${p.seconds_left} s` : ''}`
+      : p.phase === 'transcribing' ? 'working out what you said…'
+      : p.phase === 'thinking' ? `thinking about “${p.heard ?? ''}”…`
+      : p.phase === 'answered' ? `you asked: ${p.heard ?? ''}`
+      : p.phase === 'error' ? (p.error ?? 'that did not work')
+      : ''
+    askBanner.textContent = label
+    askBanner.dataset['phase'] = p.phase
+    askBanner.hidden = !label
+    if (p.phase === 'answered') window.setTimeout(() => { if (askBanner.dataset['phase'] === 'answered') askBanner.hidden = true }, 6000)
+  },
 )
 
 fileEl.addEventListener('change', async () => {

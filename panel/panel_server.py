@@ -151,7 +151,10 @@ class PanelState:
         self.light = light
         self.lock = threading.Lock()
 
-        self.view = "home"                 # home | scan | hand | graphs | system
+        self.view = "home"                 # home | scan | hand | graphs | ask | rope | system
+        # The app's Ask box mirrors its phase here so the touchscreen can show
+        # LISTENING / THINKING in letters a visitor can read from a step back.
+        self.ask: dict = {"phase": "idle"}
         # Latest motion snapshot from the app (graphs + scrub position), for
         # the Graphs view. The app only sends these while this view is open.
         self.sim: Optional[dict] = None
@@ -198,6 +201,7 @@ class PanelState:
                 "saved_count": self.saved_count,
                 "last_saved": self.last_saved,
             },
+            "ask": self.ask,
             "shutdown_allowed": ALLOW_SHUTDOWN,
             "shutting_down": self.shutting_down,
             "boot_id": BOOT_ID,
@@ -361,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/view":
             view = str(body.get("view", "home"))
-            if view not in ("home", "scan", "hand", "graphs", "system", "rope"):
+            if view not in ("home", "scan", "hand", "graphs", "ask", "system", "rope"):
                 return self._json({"error": f"unknown view {view}"}, 400)
             with state.lock:
                 state.view = view
@@ -414,9 +418,30 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
 
         if path == "/api/app/ask":
-            # Panel tile -> app: start recording a spoken question there (the
+            # Panel -> app: start, stop, or toggle the recording there (the
             # mic is the webcam's, and the answer belongs on the big screen).
-            hub.publish("app:ask", {})
+            action = str(body.get("action", "toggle"))
+            if action not in ("start", "stop", "toggle"):
+                return self._json({"error": f"unknown action {action}"}, 400)
+            hub.publish("app:ask", {"action": action})
+            return self._json({"ok": True})
+
+        if path == "/api/ask/state":
+            # App -> panel: where the Ask box is (idle / listening / transcribing
+            # / thinking / answered / error), with the words heard and the
+            # answer, so the touchscreen can show the same thing the monitor does.
+            phase = str(body.get("phase", "idle"))
+            if phase not in ("idle", "listening", "transcribing", "thinking", "answered", "error"):
+                return self._json({"error": f"unknown phase {phase}"}, 400)
+            with state.lock:
+                state.ask = {
+                    "phase": phase,
+                    "seconds_left": body.get("seconds_left"),
+                    "heard": body.get("heard"),
+                    "answer": body.get("answer"),
+                    "error": body.get("error"),
+                }
+            hub.publish("ask", state.ask)
             return self._json({"ok": True})
 
         if path == "/api/sim/control":

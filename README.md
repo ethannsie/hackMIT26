@@ -67,8 +67,12 @@ Two more things the local models do, both text-only and both on the box:
   derivation as a scan. 5–6 s measured. A consistency check rejects a draft
   whose numbers do not appear in its own statement and asks for another.
 - **Ask about the physics** — a box under the derivation. Type a question
-  (or `A`), or press `🎤` / `M` / the panel's *Ask a question* tile to record
-  7 s from the webcam's own mic. The clip goes to Deepgram (`DEEPGRAM_API_KEY`
+  (or `A`), or press `🎤` / `M` to talk: press once to start listening, again
+  to stop (20 s ceiling). The panel's *Ask a question* tile opens an Ask view
+  on the touchscreen with the same press-to-start / press-to-stop on its
+  button or the keypad's `1`, and shows LISTENING (red, countdown), working /
+  thinking (amber) and the answer (green); a banner over the sim says the
+  same thing on the monitor. The recording is the webcam's own mic. The clip goes to Deepgram (`DEEPGRAM_API_KEY`
   in `.env`, server-side only; needs internet) and the words come back into
   the box; the question then goes to the local model with the problem on
   screen and the best-matching passages from OpenStax *University Physics

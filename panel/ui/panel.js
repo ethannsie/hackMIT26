@@ -19,6 +19,7 @@ const els = {
     scan: $('#view-scan'),
     hand: $('#view-hand'),
     graphs: $('#view-graphs'),
+    ask: $('#view-ask'),
     rope: $('#view-rope'),
     system: $('#view-system'),
   },
@@ -27,6 +28,15 @@ const els = {
   graphsTime: $('#graphs-time'),
   graphsHint: $('#graphs-hint'),
   playBtn: $('#btn-play'),
+  askStage: $('#ask-stage'),
+  askPhaseLabel: $('#ask-phase-label'),
+  askCount: $('#ask-count'),
+  askHint: $('#ask-hint'),
+  askHeard: $('#ask-heard'),
+  askAnswer: $('#ask-answer'),
+  askBtn: $('#btn-ask'),
+  askLabel: $('#ask-label'),
+  homeAskSub: $('#home-ask-sub'),
   playLabel: $('#play-label'),
   homeHandSub: $('#home-hand-sub'),
   homeSaved: $('#home-saved'),
@@ -80,6 +90,7 @@ function connect() {
   });
 
   source.addEventListener('state', (e) => render(JSON.parse(e.data)));
+  source.addEventListener('ask', (e) => renderAsk(JSON.parse(e.data)));
   source.addEventListener('sim', (e) => {
     sim = JSON.parse(e.data);
     if (state?.view === 'graphs') renderGraphs();
@@ -127,6 +138,7 @@ function render(next) {
   }
   if (previousView !== state.view) onViewChange(previousView, state.view);
   if (state.view === 'graphs') renderGraphs();
+  if (state.ask) renderAsk(state.ask);
 
   // Header.
   els.modeChip.textContent = `mode ${state.app_mode}`;
@@ -467,9 +479,53 @@ for (const btn of document.querySelectorAll('[data-app]')) {
   btn.addEventListener('click', async () => {
     const what = btn.dataset.app;
     await post(`/api/app/${what}`);
-    toast(what === 'ask' ? 'Listening on the big screen — speak now' : 'Writing a new problem on the big screen…', 'ok');
+    toast('Writing a new problem on the big screen…', 'ok');
   });
 }
+
+// --- ask ---------------------------------------------------------------------
+//
+// The recording itself happens in the app (the mic is the webcam's and the
+// app window owns it); this view is the visitor's view of it. Press 1 or the
+// button to start, press again to stop: the app posts every phase change to
+// /api/ask/state and it lands here as an `ask` event.
+
+const ASK_PHASES = {
+  idle:         { label: 'Ready',            btn: 'Start listening', hint: 'Press 1 (or the button) and ask your question out loud. Press again when you are done.' },
+  listening:    { label: 'LISTENING',        btn: 'Stop and ask',    hint: 'Speak now. Press 1 again as soon as you finish the question.' },
+  transcribing: { label: 'Working out what you said…', btn: 'Please wait', hint: '' },
+  thinking:     { label: 'Thinking…',        btn: 'Please wait',     hint: 'The GX10 is writing an answer. It appears here and on the big screen.' },
+  answered:     { label: 'Answered',         btn: 'Ask another',     hint: '' },
+  error:        { label: 'That did not work', btn: 'Try again',      hint: '' },
+};
+
+let askPhase = 'idle';
+
+function renderAsk(a) {
+  askPhase = a.phase || 'idle';
+  const spec = ASK_PHASES[askPhase] || ASK_PHASES.idle;
+  els.askStage.dataset.phase = askPhase;
+  els.askPhaseLabel.textContent = spec.label;
+  els.askCount.textContent = askPhase === 'listening' && Number.isFinite(a.seconds_left) ? `${a.seconds_left} s` : '';
+  els.askHint.textContent = askPhase === 'error' ? (a.error || 'Try again, closer to the camera.') : spec.hint;
+  els.askHint.hidden = !els.askHint.textContent;
+  els.askHeard.textContent = a.heard || '';
+  els.askHeard.hidden = !a.heard;
+  els.askAnswer.textContent = a.answer || '';
+  els.askAnswer.hidden = !a.answer;
+  els.askLabel.textContent = spec.btn;
+  els.askBtn.disabled = askPhase === 'transcribing' || askPhase === 'thinking';
+  els.askBtn.classList.toggle('listening', askPhase === 'listening');
+  const busy = askPhase !== 'idle' && askPhase !== 'answered' && askPhase !== 'error';
+  els.homeAskSub.textContent = busy ? `${spec.label.toLowerCase()} on the big screen` : 'speak to the webcam, answer on the big screen';
+}
+
+/** Press to start, press again to stop. */
+function askToggle() {
+  if (askPhase === 'transcribing' || askPhase === 'thinking') return;
+  post('/api/app/ask', { action: askPhase === 'listening' ? 'stop' : 'start' });
+}
+els.askBtn.addEventListener('click', askToggle);
 
 for (const seg of document.querySelectorAll('[data-switch]')) {
   seg.addEventListener('click', () => post('/api/hand/switch', { switch: seg.dataset.switch }));
@@ -483,7 +539,9 @@ els.saveBtn.addEventListener('click', save);
 // screen a judge is looking at.
 window.addEventListener('keydown', (e) => {
   if (e.repeat || !state) return;
-  if (e.key === '1') {
+  if (e.key === '1' && state.view === 'ask') {
+    askToggle();
+  } else if (e.key === '1') {
     if (state.view !== 'scan') post('/api/scan/start').then(capture);
     else capture();
   } else if (e.key === '2' && state.view === 'scan') {

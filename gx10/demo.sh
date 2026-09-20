@@ -187,7 +187,12 @@ echo "-- browser ($BROWSER)"
 # Two monitors: both full-screen. One monitor: sim full-screen, panel a window
 # on top so the scan button is still reachable.
 if (( count >= 2 )); then panel_fs=1; else panel_fs=0; fi
+# --use-fake-ui-for-media-stream: auto-accept the getUserMedia permission
+# prompt, which a fullscreen --app window never shows anyone. The device is
+# still the real webcam mic (that would be --use-fake-DEVICE-, which we do
+# not want). Without this the first spoken question silently never starts.
 open_window hackmit-app   "http://localhost:5173" "$big_x" "$big_y" "$big_w" "$big_h" 1 \
+  --use-fake-ui-for-media-stream \
   --remote-debugging-port=9222
 # DevTools ports (localhost only): 9222 = sim, 9223 = panel. Both windows can
 # be inspected over ssh — `curl localhost:9223/json` — without a keyboard.

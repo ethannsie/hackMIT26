@@ -119,6 +119,8 @@ reloaded panel comes back mid-scan exactly where it was.
 | `PANEL_PORT` | `8770` | |
 | `PANEL_CAMERA_INDEX` | `0` | the USB webcam |
 | `PANEL_CAMERA_WIDTH` / `_HEIGHT` | `1280` / `720` | |
+| `PANEL_CAMERA_FOURCC` / `_FPS` | `MJPG` / `30` | OpenCV's default raw YUYV caps a USB 2 webcam at ~10 fps at 720p; MJPEG runs at the C270's full 30 |
+| `PANEL_CAMERA_DYNAMIC_FPS` | `0` | `1` lets the C270's auto-exposure halve the rate in dim light (it does, to 15). Needs `v4l2-ctl` (`v4l-utils`) |
 | `PANEL_SCENE_WIDTH_M` | `1.6` | metres across the frame — the one number that sets how far a hand moves a body |
 | `PANEL_CAPTURE_DIR` | `<repo>/captures` | |
 | `PANEL_MODEL` | auto | `hand_landmarker.task`; reuses the repo-root copy if `hand_physics_demo.py` already fetched one |

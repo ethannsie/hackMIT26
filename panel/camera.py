@@ -15,6 +15,8 @@ the same box is the one combination that makes the demo drop frames.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
@@ -220,8 +222,36 @@ class CameraWorker:
             self._camera_ok = False
             self._error = f"could not open camera index {self.index}"
             return None
+        # MJPEG first, then size, then rate — V4L2 negotiates in that order.
+        # OpenCV's default is raw YUYV, and a USB 2 webcam cannot move
+        # 1280x720 YUYV faster than ~10 fps; the same camera does 30 fps in
+        # MJPEG. The C270 tops out at 30 either way; there is no 60 fps mode.
+        fourcc = os.environ.get("PANEL_CAMERA_FOURCC", "MJPG")
+        if fourcc:
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc[:4]))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.request_size[0])
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.request_size[1])
+        cap.set(cv2.CAP_PROP_FPS, float(os.environ.get("PANEL_CAMERA_FPS", "30")))
+        got = int(cap.get(cv2.CAP_PROP_FOURCC)).to_bytes(4, "little").decode("latin1")
+        print(
+            f"[camera] {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} "
+            f"{got} @ {cap.get(cv2.CAP_PROP_FPS):g} fps requested",
+            flush=True,
+        )
+        # The C270 halves its frame rate whenever auto-exposure wants more than
+        # one frame time of light, which under indoor lighting is always: 30
+        # fps negotiated, 15 delivered. Telling it not to (exposure_dynamic_
+        # framerate=0) holds 30 and lets gain, and the ring light, do the work.
+        # OpenCV has no property for this UVC control, so go through v4l2-ctl.
+        if os.environ.get("PANEL_CAMERA_DYNAMIC_FPS", "0") == "0" and shutil.which("v4l2-ctl"):
+            dev = f"/dev/video{self.index}" if isinstance(self.index, int) else str(self.index)
+            try:
+                subprocess.run(
+                    ["v4l2-ctl", "-d", dev, "--set-ctrl=exposure_dynamic_framerate=0"],
+                    check=False, capture_output=True, timeout=3,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                print(f"[camera] could not pin the frame rate: {exc}", flush=True)
         self._camera_ok = True
         self._error = ""
         return cap

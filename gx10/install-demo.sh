@@ -39,7 +39,7 @@ if [[ -f .env ]]; then echo "present"; else cp .env.example .env; echo "copied f
 grep -E '^EXTRACT_LOCAL_(URL|MODEL)=' .env
 
 say "window tools (wmctrl pins each browser window to its monitor)"
-if command -v wmctrl >/dev/null; then echo "present"; else sudo -n apt-get install -y -qq wmctrl xdotool || echo "!! could not install wmctrl (offline?) — demo.sh still works, placement is best effort"; fi
+if command -v wmctrl >/dev/null && command -v v4l2-ctl >/dev/null; then echo "present"; else sudo -n apt-get install -y -qq wmctrl xdotool v4l-utils || echo "!! could not install wmctrl/v4l-utils (offline?) — demo.sh still works; placement and the 30 fps camera pin are best effort"; fi
 
 say "camera"
 if ls /dev/video* >/dev/null 2>&1; then ls /dev/video*; else echo "!! no /dev/video* — plug in the C270"; fi

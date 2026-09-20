@@ -19,6 +19,9 @@ Environment:
   PANEL_CAMERA_INDEX    0
   PANEL_CAMERA_WIDTH    1280
   PANEL_CAMERA_HEIGHT   720
+  PANEL_CAMERA_FOURCC   MJPG   raw YUYV caps a USB 2 webcam at ~10 fps at 720p
+  PANEL_CAMERA_FPS      30     the C270's maximum
+  PANEL_CAMERA_DYNAMIC_FPS  0  1 lets auto-exposure drop the rate to 15 in dim light
   PANEL_SCENE_WIDTH_M   1.6    metres across the camera frame, for sim coords
   PANEL_CAPTURE_DIR     <repo>/captures
   PANEL_MODEL           path to hand_landmarker.task (auto-discovered otherwise)

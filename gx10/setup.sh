@@ -36,6 +36,17 @@ command -v chromium >/dev/null || sudo snap install chromium
 sudo snap connect chromium:raw-usb 2>/dev/null || true
 sudo apt-get install -y -qq python3-serial python3-websockets >/dev/null
 
+echo "== mqtt broker for the camera ring light (hackmit_camera_light/) =="
+sudo apt-get install -y -qq mosquitto mosquitto-clients >/dev/null
+sudo tee /etc/mosquitto/conf.d/hackmit.conf >/dev/null <<'CONF'
+# HackMIT scan light: the ESP32 on the same Wi-Fi subscribes here. LAN only,
+# no auth — hackathon box, and the topic only switches a lamp.
+listener 1883 0.0.0.0
+allow_anonymous true
+CONF
+sudo systemctl enable --now mosquitto
+sudo systemctl restart mosquitto
+
 echo "== app =="
 command -v node >/dev/null || { curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs; }
 cd "$(dirname "$0")/.." && npm install --silent

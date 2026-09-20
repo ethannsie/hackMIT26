@@ -87,6 +87,14 @@ open, or the app is in sandbox consuming frames. The capture loop always runs;
 the landmarker is what gets switched, because a 27B vision model and a hand
 tracker on the same box is the combination that drops frames.
 
+## The ring light
+
+The white ring on the ESP32 lights the page while the panel is in the scan
+view and goes dark the moment it leaves. `PanelState.sync_light()` runs on
+every broadcast and publishes a retained MQTT message through `light.py`; the
+firmware in `hackmit_camera_light/` mirrors it. No broker, no ring: the panel
+logs one line and carries on.
+
 ## Endpoints
 
 | | |
@@ -111,11 +119,16 @@ reloaded panel comes back mid-scan exactly where it was.
 | `PANEL_PORT` | `8770` | |
 | `PANEL_CAMERA_INDEX` | `0` | the USB webcam |
 | `PANEL_CAMERA_WIDTH` / `_HEIGHT` | `1280` / `720` | |
+| `PANEL_CAMERA_FOURCC` / `_FPS` | `MJPG` / `30` | OpenCV's default raw YUYV caps a USB 2 webcam at ~10 fps at 720p; MJPEG runs at the C270's full 30 |
+| `PANEL_CAMERA_DYNAMIC_FPS` | `0` | `1` lets the C270's auto-exposure halve the rate in dim light (it does, to 15). Needs `v4l2-ctl` (`v4l-utils`) |
 | `PANEL_SCENE_WIDTH_M` | `1.6` | metres across the frame — the one number that sets how far a hand moves a body |
 | `PANEL_CAPTURE_DIR` | `<repo>/captures` | |
 | `PANEL_MODEL` | auto | `hand_landmarker.task`; reuses the repo-root copy if `hand_physics_demo.py` already fetched one |
 | `PANEL_SHUTDOWN_CMD` | `sudo systemctl poweroff` | set to `echo dry-run` while testing |
 | `PANEL_ALLOW_SHUTDOWN` | `1` | `0` removes the endpoint |
+| `PANEL_LIGHT` | `1` | `0` stops driving the camera ring light |
+| `PANEL_LIGHT_MQTT` | `localhost:1883` | broker the ESP32 ring light listens to |
+| `PANEL_LIGHT_TOPIC` | `hackmit/scanlight` | retained `on`/`off`, see [`hackmit_camera_light/`](../hackmit_camera_light/README.md) |
 
 ## Notes
 

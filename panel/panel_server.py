@@ -19,11 +19,17 @@ Environment:
   PANEL_CAMERA_INDEX    0
   PANEL_CAMERA_WIDTH    1280
   PANEL_CAMERA_HEIGHT   720
+  PANEL_CAMERA_FOURCC   MJPG   raw YUYV caps a USB 2 webcam at ~10 fps at 720p
+  PANEL_CAMERA_FPS      30     the C270's maximum
+  PANEL_CAMERA_DYNAMIC_FPS  0  1 lets auto-exposure drop the rate to 15 in dim light
   PANEL_SCENE_WIDTH_M   1.6    metres across the camera frame, for sim coords
   PANEL_CAPTURE_DIR     <repo>/captures
   PANEL_MODEL           path to hand_landmarker.task (auto-discovered otherwise)
   PANEL_SHUTDOWN_CMD    override the poweroff command (set to 'echo dry-run' to test)
   PANEL_ALLOW_SHUTDOWN  0 to disable the shutdown endpoint entirely
+  PANEL_LIGHT           0 to not drive the camera ring light at all
+  PANEL_LIGHT_MQTT      localhost:1883   broker the ESP32 ring light listens to
+  PANEL_LIGHT_TOPIC     hackmit/scanlight
 """
 
 from __future__ import annotations
@@ -45,6 +51,7 @@ import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from camera import CameraWorker  # noqa: E402
+from light import ScanLight  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 UI_DIR = HERE / "ui"
@@ -118,9 +125,10 @@ class PanelState:
     to change what the main app is doing.
     """
 
-    def __init__(self, camera: CameraWorker, hub: Hub) -> None:
+    def __init__(self, camera: CameraWorker, hub: Hub, light: ScanLight) -> None:
         self.camera = camera
         self.hub = hub
+        self.light = light
         self.lock = threading.Lock()
 
         self.view = "home"                 # home | scan | hand | system
@@ -147,6 +155,11 @@ class PanelState:
         main app in sandbox mode consuming frames over /api/hand/events."""
         self.camera.set_tracking(self.hand_wanted() or self.view == "hand")
 
+    def sync_light(self) -> None:
+        """The ring light is on exactly while the panel shows the scan view —
+        the operator is framing a page, so light it; anywhere else, don't."""
+        self.light.set(self.view == "scan")
+
     def snapshot(self) -> dict:
         return {
             "view": self.view,
@@ -163,10 +176,12 @@ class PanelState:
             "shutdown_allowed": ALLOW_SHUTDOWN,
             "shutting_down": self.shutting_down,
             "camera": self.camera.status(),
+            "light": self.light.status(),
         }
 
     def broadcast(self, event: str = "state", extra: Optional[dict] = None) -> None:
         self.sync_camera()
+        self.sync_light()
         data = self.snapshot()
         if extra:
             data.update(extra)
@@ -181,7 +196,8 @@ camera = CameraWorker(
     model_path=os.environ.get("PANEL_MODEL"),
 )
 hub = Hub()
-state = PanelState(camera, hub)
+light = ScanLight()
+state = PanelState(camera, hub, light)
 
 
 def encode_jpeg(frame, quality: int) -> Optional[bytes]:
